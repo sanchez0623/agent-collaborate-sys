@@ -1,16 +1,5 @@
 // ============================================================
 // EmailService - 跟进邮件生成服务（集成 Demo 核心逻辑）
-//
-// 端到端流程：
-//   1. 用户创建 CRM 跟进记录
-//   2. 调用本服务生成邮件（LLM 根据客户画像 + 跟进内容生成）
-//   3. 前端展示邮件预览，人工审核
-//   4. 审核通过后 EmailAdapter 发送
-//
-// 面试价值：
-//   - 证明"CRM 数据 → Agent 智能生成 → 外部系统发送"的完整链路
-//   - IExternalSystemAdapter 的 EmailAdapter 实现证明接口扩展性
-//   - 无需修改 Agent 代码，新增外部系统零侵入
 // ============================================================
 
 using System.Text.Json;
@@ -37,33 +26,38 @@ public class EmailService
         _logger = logger;
     }
 
-    /// <summary>
-    /// 根据跟进记录生成邮件
-    /// </summary>
     public async Task<EmailDraft?> GenerateFollowUpEmailAsync(int followUpId)
     {
-        // 1. 获取跟进记录 + 客户信息
+        _logger.LogInformation("邮件生成开始: followUpId={Id}", followUpId);
+
+        // 1. 获取跟进记录
         var followUp = await _store.GetFollowUpAsync(followUpId);
         if (followUp == null)
         {
-            _logger.LogWarning("跟进记录不存在: {Id}", followUpId);
+            _logger.LogWarning("邮件生成失败: 跟进记录不存在 Id={Id}", followUpId);
             return null;
         }
+        _logger.LogDebug("获取跟进记录: customerId={Cid} method={Method} content={Content}",
+            followUp.CustomerId, followUp.Method, followUp.Content.Truncate(100));
 
+        // 2. 获取客户信息
         var customer = await _store.GetCustomerAsync(followUp.CustomerId);
         if (customer == null)
         {
-            _logger.LogWarning("客户不存在: {Id}", followUp.CustomerId);
+            _logger.LogWarning("邮件生成失败: 客户不存在 Id={Id}", followUp.CustomerId);
             return null;
         }
+        _logger.LogDebug("获取客户: name={Name} company={Company} level={Level} email={Email}",
+            customer.Name, customer.Company, customer.Level, customer.Email);
 
-        // 2. 获取该客户的历史跟进（上下文）
+        // 3. 历史跟进
         var historyFollowUps = (await _store.ListFollowUpsAsync(followUp.CustomerId)).Take(3).ToList();
+        _logger.LogDebug("历史跟进记录数: {Count}", historyFollowUps.Count);
 
-        // 3. 构建 LLM prompt
+        // 4. 调用 LLM
         var prompt = BuildEmailPrompt(customer, followUp, historyFollowUps);
+        _logger.LogDebug("LLM prompt 长度: {Len}", prompt.Length);
 
-        // 4. 调用 LLM 生成邮件
         var messages = new List<ChatMsg>
         {
             new(ChatRole.System, "你是一名专业的商务助理，根据客户跟进记录生成跟进邮件。邮件应专业、简洁、个性化，针对客户等级调整语气。输出严格 JSON 格式。"),
@@ -72,16 +66,24 @@ public class EmailService
 
         try
         {
+            _logger.LogInformation("调用 LLM 生成邮件...");
             var response = await _chatClient.GetResponseAsync(messages,
                 new ChatOptions { MaxOutputTokens = 1024 },
                 cancellationToken: CancellationToken.None);
             var rawText = response.Text ?? response.Messages.FirstOrDefault()?.Text ?? "";
 
+            _logger.LogInformation("LLM 返回: length={Len} tokens(out={Out} in={In}) first={First}",
+                rawText.Length,
+                response.Usage?.OutputTokenCount ?? 0,
+                response.Usage?.InputTokenCount ?? 0,
+                rawText.Truncate(80));
+
             // 5. 解析 JSON
             var draft = ParseEmailDraft(rawText);
             if (draft == null)
             {
-                _logger.LogWarning("LLM 返回非 JSON 格式: length={Len} raw={Raw}", rawText.Length, rawText.Truncate(500));
+                _logger.LogWarning("JSON 解析失败: raw前80={First80} raw末80={Last80}",
+                    rawText.Truncate(80), rawText.Length > 80 ? rawText[^80..] : "");
                 return null;
             }
 
@@ -91,20 +93,21 @@ public class EmailService
             draft.FollowUpId = followUpId;
             draft.GeneratedAt = DateTime.UtcNow;
 
+            _logger.LogInformation("邮件生成成功: subject={Subject} customer={Customer} email={Email}",
+                draft.Subject, draft.CustomerName, draft.CustomerEmail);
             return draft;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LLM 生成邮件失败");
+            _logger.LogError(ex, "LLM 调用异常");
             return null;
         }
     }
 
-    /// <summary>
-    /// 发送邮件（经 EmailAdapter）
-    /// </summary>
+    /// <summary>发送邮件（经 EmailAdapter）</summary>
     public async Task<bool> SendEmailAsync(EmailDraft draft)
     {
+        _logger.LogInformation("发送邮件: to={To} subject={Subject}", draft.CustomerEmail, draft.Subject);
         var result = await _emailAdapter.ExecuteAsync(new ExternalOperationRequest(
             ExternalSystemType.Email, "email", ExternalOperationType.Create, null,
             JsonSerializer.Serialize(new
@@ -114,6 +117,7 @@ public class EmailService
                 body = draft.Body
             })));
 
+        _logger.LogInformation("发送结果: success={Success} err={Error}", result.Success, result.Error);
         return result.Success;
     }
 
@@ -149,7 +153,6 @@ public class EmailService
 
     private static EmailDraft? ParseEmailDraft(string text)
     {
-        // 去除可能的 markdown 代码块包裹
         var json = text.Trim();
         if (json.StartsWith("```")) json = json.Substring(json.IndexOf('\n') + 1);
         if (json.EndsWith("```")) json = json[..json.LastIndexOf("```")];
@@ -184,7 +187,6 @@ public class EmailDraft
     public DateTime GeneratedAt { get; set; }
 }
 
-/// <summary>字符串截断</summary>
 file static class EmailStringExtensions
 {
     public static string Truncate(this string value, int maxLength)
