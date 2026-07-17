@@ -90,14 +90,18 @@ builder.Services.AddDbContext<MultiAgentSystem.Api.Data.MultiAgentDbContext>(opt
     if (dbCfg.Provider == "pgsql")
         options.UseNpgsql(dbCfg.ConnectionString);
     else
-        options.UseSqlite($"Data Source=multiagent.db");
+        options.UseSqlite(string.IsNullOrWhiteSpace(dbCfg.ConnectionString)
+            ? "Data Source=multiagent.db"
+            : dbCfg.ConnectionString);
 });
 builder.Services.AddDbContextFactory<MultiAgentSystem.Api.Data.MultiAgentDbContext>(options =>
 {
     if (dbCfg.Provider == "pgsql")
         options.UseNpgsql(dbCfg.ConnectionString);
     else
-        options.UseSqlite($"Data Source=multiagent.db");
+        options.UseSqlite(string.IsNullOrWhiteSpace(dbCfg.ConnectionString)
+            ? "Data Source=multiagent.db"
+            : dbCfg.ConnectionString);
 });
 
 // ========== 4. 业务存储（全部使用 EF Core IDbContextFactory） ==========
