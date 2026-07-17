@@ -68,7 +68,7 @@ public class EmailService
         {
             _logger.LogInformation("调用 LLM 生成邮件...");
             var response = await _chatClient.GetResponseAsync(messages,
-                new ChatOptions { MaxOutputTokens = 1024 },
+                new ChatOptions { MaxOutputTokens = 2048 },
                 cancellationToken: CancellationToken.None);
             var rawText = response.Text ?? response.Messages.FirstOrDefault()?.Text ?? "";
 
@@ -168,6 +168,20 @@ public class EmailService
         }
         catch
         {
+            // 尝试修复截断的 JSON（LLM 输出被 token 限制截断时）
+            // 缺少 } 是常见模式
+            if (!json.EndsWith("}"))
+            {
+                try
+                {
+                    var repaired = json + @"""}";
+                    var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var doc = JsonSerializer.Deserialize<EmailDraftJson>(repaired, opts);
+                    if (doc != null && !string.IsNullOrWhiteSpace(doc.Subject) && !string.IsNullOrWhiteSpace(doc.Body))
+                        return new EmailDraft { Subject = doc.Subject, Body = doc.Body };
+                }
+                catch { }
+            }
             return null;
         }
     }
