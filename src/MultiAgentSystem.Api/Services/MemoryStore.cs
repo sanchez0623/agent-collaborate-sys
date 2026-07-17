@@ -31,12 +31,12 @@ public class MemoryStore
 {
     private readonly KnowledgeStore _store;
     private readonly EmbeddingService _embeddings;
-    private readonly VectorStore _vectors;
+    private readonly IVectorStore _vectors;
 
     /// <summary>触发摘要的消息数阈值（6 轮对话 = 12 条消息）</summary>
     private const int SummaryThreshold = 12;
 
-    public MemoryStore(KnowledgeStore store, EmbeddingService embeddings, VectorStore vectors)
+    public MemoryStore(KnowledgeStore store, EmbeddingService embeddings, IVectorStore vectors)
     {
         _store = store;
         _embeddings = embeddings;

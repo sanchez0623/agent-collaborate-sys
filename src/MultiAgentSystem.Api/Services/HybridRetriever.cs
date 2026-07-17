@@ -36,7 +36,7 @@ namespace MultiAgentSystem.Api.Services;
 public class HybridRetriever
 {
     private readonly EmbeddingService _embeddings;
-    private readonly VectorStore _vectorStore;
+    private readonly IVectorStore _vectorStore;
     private readonly KnowledgeStore _store;
 
     /// <summary>RRF 融合常数 k（越大越平滑，越小越偏向 Top）</summary>
@@ -45,7 +45,7 @@ public class HybridRetriever
     /// <summary>同时嵌入文档的并发上限（批量上传 50 个时最多 3 个并行，避免嵌入 API 被 429 限流）</summary>
     private static readonly SemaphoreSlim _ingestLimiter = new(3, 3);
 
-    public HybridRetriever(EmbeddingService embeddings, VectorStore vectorStore, KnowledgeStore store)
+    public HybridRetriever(EmbeddingService embeddings, IVectorStore vectorStore, KnowledgeStore store)
     {
         _embeddings = embeddings;
         _vectorStore = vectorStore;
@@ -63,7 +63,7 @@ public class HybridRetriever
         {
             // 清理旧分片（重新解析时用）
             await _store.ClearChunksByDocumentAsync(documentId);
-            _vectorStore.RemoveByDocument(documentId);
+            await _vectorStore.RemoveByDocumentAsync(documentId);
 
             var chunks = DocumentParser.ParseAndChunk(fileName, databaseId, bytes);
             foreach (var c in chunks)
@@ -72,7 +72,7 @@ public class HybridRetriever
                 c.DatabaseId = databaseId;
                 var emb = await _embeddings.GetEmbeddingAsync(c.Content);
                 var chunkId = await _store.AddChunkAsync(c, emb);
-                _vectorStore.AddVector(chunkId, emb, documentId, databaseId);
+                await _vectorStore.AddVectorAsync(chunkId, emb, documentId, databaseId);
             }
             await _store.UpdateDocumentStatusAsync(documentId, DocumentStatus.Ready, chunks.Count);
         }
@@ -93,7 +93,7 @@ public class HybridRetriever
         foreach (var (chunk, emb) in chunksWithEmb)
         {
             if (emb is null || emb.Length == 0) continue;
-            _vectorStore.AddVector(chunk.Id, emb, chunk.DocumentId, chunk.DatabaseId);
+            await _vectorStore.AddVectorAsync(chunk.Id, emb, chunk.DocumentId, chunk.DatabaseId);
         }
         _vectorStore.MarkDatabaseLoaded(databaseId);
     }
@@ -116,7 +116,7 @@ public class HybridRetriever
 
         // ---------- 路径 A：向量语义检索 ----------
         var queryVec = await _embeddings.GetEmbeddingAsync(query);
-        var vectorHits = _vectorStore.Search(queryVec, topK * 3, databaseId);
+        var vectorHits = await _vectorStore.SearchAsync(queryVec, topK * 3, databaseId);
         var vectorScores = vectorHits.ToDictionary(h => h.chunkId, h => h.score);
 
         // ---------- 路径 B：关键词 BM25 检索 ----------

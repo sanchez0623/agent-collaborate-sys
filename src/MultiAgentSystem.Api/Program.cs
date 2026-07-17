@@ -117,8 +117,16 @@ builder.Services.AddSingleton<CrmTools>();
 builder.Services.AddSingleton<KnowledgeStore>(_ => new KnowledgeStore("multiagent.db"));
 // EmbeddingService 调 DeepSeek embedding API，失败降级为哈希向量
 builder.Services.AddSingleton<EmbeddingService>();
-// VectorStore 内存向量存储（演示项目避免 Docker 依赖）
-builder.Services.AddSingleton<VectorStore>();
+// VectorStore：优先 Qdrant，不可用时降级为内存向量（无需 Docker 依赖）
+var qdrantUrl = builder.Configuration.GetValue<string>("Qdrant:Url");
+if (!string.IsNullOrEmpty(qdrantUrl))
+{
+    builder.Services.AddSingleton<IVectorStore, QdrantVectorStore>();
+}
+else
+{
+    builder.Services.AddSingleton<IVectorStore, InMemoryVectorStore>();
+}
 // HybridRetriever 混合检索核心（向量+关键词+RRF融合+可选重排）
 builder.Services.AddSingleton<HybridRetriever>();
 // MemoryStore 长期记忆 + 用户画像

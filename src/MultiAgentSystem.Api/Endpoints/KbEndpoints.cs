@@ -23,9 +23,9 @@ public static class KbEndpoints
             return Results.Created($"/api/kb/databases/{id}", kb);
         }).WithTags("RAG知识库");
 
-        app.MapDelete("/api/kb/databases/{id}", async (int id, KnowledgeStore store, VectorStore vectors) =>
+        app.MapDelete("/api/kb/databases/{id}", async (int id, KnowledgeStore store, IVectorStore vectors) =>
         {
-            vectors.RemoveByDatabase(id);
+            await vectors.RemoveByDatabaseAsync(id);
             var ok = await store.DeleteDatabaseAsync(id);
             return ok ? Results.Ok() : Results.NotFound();
         }).WithTags("RAG知识库");
@@ -34,9 +34,9 @@ public static class KbEndpoints
         app.MapGet("/api/kb/databases/{id}/documents", async (int id, KnowledgeStore store) =>
             Results.Ok(await store.ListDocumentsAsync(id))).WithTags("RAG文档");
 
-        app.MapDelete("/api/kb/documents/{id}", async (int id, KnowledgeStore store, VectorStore vectors) =>
+        app.MapDelete("/api/kb/documents/{id}", async (int id, KnowledgeStore store, IVectorStore vectors) =>
         {
-            vectors.RemoveByDocument(id);
+            await vectors.RemoveByDocumentAsync(id);
             var ok = await store.DeleteDocumentAsync(id);
             return ok ? Results.Ok() : Results.NotFound();
         }).WithTags("RAG文档");
@@ -160,7 +160,7 @@ public static class KbEndpoints
         }).WithTags("RAG评测");
 
         // ---------- 知识库统计 ----------
-        app.MapGet("/api/kb/stats", async (KnowledgeStore store, VectorStore vectors, EmbeddingService emb) =>
+        app.MapGet("/api/kb/stats", async (KnowledgeStore store, IVectorStore vectors, EmbeddingService emb) =>
         {
             var stats = await store.GetRagStatsAsync();
             return Results.Ok(new
