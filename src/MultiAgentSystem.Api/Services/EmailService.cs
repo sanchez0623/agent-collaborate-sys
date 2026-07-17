@@ -157,7 +157,8 @@ public class EmailService
 
         try
         {
-            var doc = JsonSerializer.Deserialize<EmailDraftJson>(json);
+            var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var doc = JsonSerializer.Deserialize<EmailDraftJson>(json, opts);
             if (doc == null || string.IsNullOrWhiteSpace(doc.Subject) || string.IsNullOrWhiteSpace(doc.Body))
                 return null;
             return new EmailDraft { Subject = doc.Subject, Body = doc.Body };
