@@ -2,6 +2,7 @@
 // TestCaseStore - 评测用例仓储（EF Core）
 // ============================================================
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using MultiAgentSystem.Api.Data;
 using MultiAgentSystem.Api.Models;

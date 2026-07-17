@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 // ============================================================
 // 核心单元测试
 // 覆盖面试高频考点：编排退回边界、裁判解析、分词、数据CRUD
@@ -148,19 +149,11 @@ public class CoreTests
     private static BusinessStore CreateTestStore()
     {
         var path = $"test_{Guid.NewGuid():N}.db";
-        return new BusinessStore(new TestDbContextFactory(path));
-    }
-
-    private class TestDbContextFactory : IDbContextFactory<MultiAgentSystem.Api.Data.MultiAgentDbContext>
-    {
-        private readonly string _path;
-        public TestDbContextFactory(string path) => _path = path;
-        public MultiAgentSystem.Api.Data.MultiAgentDbContext CreateDbContext()
-        {
-            var options = new DbContextOptionsBuilder<MultiAgentSystem.Api.Data.MultiAgentDbContext>()
-                .UseSqlite($"Data Source={_path}").Options;
-            return new MultiAgentSystem.Api.Data.MultiAgentDbContext(options);
-        }
+        var services = new ServiceCollection();
+        services.AddDbContext<MultiAgentSystem.Api.Data.MultiAgentDbContext>(opts =>
+            opts.UseSqlite($"Data Source={path}"));
+        var sp = services.BuildServiceProvider();
+        return new BusinessStore(sp.GetRequiredService<IServiceScopeFactory>());
     }
 
     [Fact]

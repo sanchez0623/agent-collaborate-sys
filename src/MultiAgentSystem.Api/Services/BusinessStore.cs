@@ -4,6 +4,7 @@
 
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using MultiAgentSystem.Api.Data;
 using MultiAgentSystem.Api.Models;
@@ -12,13 +13,14 @@ namespace MultiAgentSystem.Api.Services;
 
 public class BusinessStore
 {
-    private readonly IDbContextFactory<MultiAgentDbContext> _dbFactory;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public BusinessStore(IDbContextFactory<MultiAgentDbContext> dbFactory)
+    public BusinessStore(IServiceScopeFactory scopeFactory)
     {
-        _dbFactory = dbFactory;
-        using var db = dbFactory.CreateDbContext();
+        _scopeFactory = scopeFactory;
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         db.Database.EnsureCreated();
         SeedData(db);
     }
@@ -45,7 +47,8 @@ public class BusinessStore
 
     public async Task<List<Customer>> ListCustomersAsync(string? owner = null, string? keyword = null)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         var q = db.Customers.AsQueryable();
         if (!string.IsNullOrWhiteSpace(owner)) q = q.Where(c => c.Owner == owner);
         if (!string.IsNullOrWhiteSpace(keyword))
@@ -55,13 +58,15 @@ public class BusinessStore
 
     public async Task<Customer?> GetCustomerAsync(int id)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         return await db.Customers.FindAsync(id);
     }
 
     public async Task<int> CreateCustomerAsync(Customer c)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         c.CreatedAt = c.UpdatedAt = DateTime.UtcNow;
         db.Customers.Add(c);
         await db.SaveChangesAsync();
@@ -71,7 +76,8 @@ public class BusinessStore
 
     public async Task<bool> UpdateCustomerAsync(Customer c)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         c.UpdatedAt = DateTime.UtcNow;
         db.Entry(c).State = EntityState.Modified;
         var rows = await db.SaveChangesAsync();
@@ -81,7 +87,8 @@ public class BusinessStore
 
     public async Task<bool> DeleteCustomerAsync(int id, string actor)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         var c = await db.Customers.FindAsync(id);
         if (c == null) return false;
         db.Customers.Remove(c);
@@ -94,7 +101,8 @@ public class BusinessStore
 
     public async Task<int> AddFollowUpAsync(FollowUp f)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         f.CreatedAt = DateTime.UtcNow;
         db.FollowUps.Add(f);
         await db.SaveChangesAsync();
@@ -104,13 +112,15 @@ public class BusinessStore
 
     public async Task<FollowUp?> GetFollowUpAsync(int id)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         return await db.FollowUps.FindAsync(id);
     }
 
     public async Task<List<FollowUp>> ListFollowUpsAsync(int customerId)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         return await db.FollowUps.Where(f => f.CustomerId == customerId)
             .OrderByDescending(f => f.CreatedAt).ToListAsync();
     }
@@ -119,7 +129,8 @@ public class BusinessStore
 
     public async Task<List<Ticket>> ListTicketsAsync(TicketStatus? status = null)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         var q = db.Tickets.AsQueryable();
         if (status.HasValue) q = q.Where(t => t.Status == status.Value);
         return await q.OrderByDescending(t => t.Id).ToListAsync();
@@ -127,7 +138,8 @@ public class BusinessStore
 
     public async Task<int> CreateTicketAsync(Ticket t)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         t.CreatedAt = DateTime.UtcNow;
         db.Tickets.Add(t);
         await db.SaveChangesAsync();
@@ -137,7 +149,8 @@ public class BusinessStore
 
     public async Task<bool> UpdateTicketStatusAsync(int id, TicketStatus status, string actor)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         var t = await db.Tickets.FindAsync(id);
         if (t == null) return false;
         t.Status = status;
@@ -151,7 +164,8 @@ public class BusinessStore
 
     public async Task<int> CreateApprovalAsync(ApprovalRequest a)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         a.CreatedAt = DateTime.UtcNow;
         db.Approvals.Add(a);
         await db.SaveChangesAsync();
@@ -160,13 +174,15 @@ public class BusinessStore
 
     public async Task<ApprovalRequest?> GetApprovalAsync(int id)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         return await db.Approvals.FindAsync(id);
     }
 
     public async Task<List<ApprovalRequest>> ListApprovalsAsync(ApprovalStatus? status = null)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         var q = db.Approvals.AsQueryable();
         if (status.HasValue) q = q.Where(a => a.Status == status.Value);
         return await q.OrderByDescending(a => a.Id).ToListAsync();
@@ -174,7 +190,8 @@ public class BusinessStore
 
     public async Task<bool> UpdateApprovalAsync(int id, ApprovalStatus status, string reviewer, string? comment)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         var a = await db.Approvals.FindAsync(id);
         if (a == null) return false;
         a.Status = status;
@@ -190,7 +207,8 @@ public class BusinessStore
 
     public async Task<User?> GetUserAsync(string username)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         return await db.Users.FindAsync(username);
     }
 
@@ -198,7 +216,8 @@ public class BusinessStore
 
     public async Task AuditAsync(AuditLogType type, string actor, string action, string? detail, string result = "success")
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         db.AuditLogs.Add(new AuditLog { Type = type, Actor = actor, Action = action, Detail = detail, Result = result, CreatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
     }
@@ -211,7 +230,8 @@ public class BusinessStore
 
     public async Task<List<AuditLog>> ListAuditLogsAsync(int limit = 100)
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         return await db.AuditLogs.OrderByDescending(a => a.Id).Take(limit).ToListAsync();
     }
 
@@ -219,7 +239,8 @@ public class BusinessStore
 
     public async Task<Dictionary<string, int>> GetStatsAsync()
     {
-        using var db = _dbFactory.CreateDbContext();
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
         var today = DateTime.UtcNow.Date;
         return new Dictionary<string, int>
         {

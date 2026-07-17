@@ -94,17 +94,8 @@ builder.Services.AddDbContext<MultiAgentSystem.Api.Data.MultiAgentDbContext>(opt
             ? "Data Source=multiagent.db"
             : dbCfg.ConnectionString);
 });
-builder.Services.AddDbContextFactory<MultiAgentSystem.Api.Data.MultiAgentDbContext>(options =>
-{
-    if (dbCfg.Provider == "pgsql")
-        options.UseNpgsql(dbCfg.ConnectionString);
-    else
-        options.UseSqlite(string.IsNullOrWhiteSpace(dbCfg.ConnectionString)
-            ? "Data Source=multiagent.db"
-            : dbCfg.ConnectionString);
-});
 
-// ========== 4. 业务存储（全部使用 EF Core IDbContextFactory） ==========
+// ========== 4. 业务存储（Singleton + IServiceScopeFactory 避免生命周期冲突） ==========
 builder.Services.AddSingleton<BusinessStore>();
 builder.Services.AddSingleton<KnowledgeStore>();
 builder.Services.AddSingleton<TestCaseStore>();
