@@ -24,7 +24,7 @@ public static class AgentRunner
     }
 
     /// <summary>
-    /// 从 AgentResponse 提取文本（MAF 1.13.0 GA：优先用 .Text，备用 .Messages 拼接）
+    /// 从 AgentResponse 提取文本，含 FunctionCallContent 序列化为 JSON
     /// </summary>
     public static string ExtractText(AgentResponse response)
     {
@@ -33,7 +33,28 @@ public static class AgentRunner
         var sb = new System.Text.StringBuilder();
         foreach (var msg in response.Messages)
         {
-            if (!string.IsNullOrEmpty(msg.Text)) sb.Append(msg.Text);
+            // 函数调用 → 序列化为 JSON 方便解析
+            if (msg.Contents != null)
+            {
+                foreach (var content in msg.Contents)
+                {
+                    switch (content)
+                    {
+                        case TextContent tc:
+                            sb.AppendLine(tc.Text);
+                            break;
+                        case FunctionCallContent fc:
+                            // 序列化为 {"name":"submit_verdict","arguments":{"approved":true,"feedback":"..."}}
+                            var argsJson = System.Text.Json.JsonSerializer.Serialize(fc.Arguments);
+                            sb.AppendLine($"{{\"name\":\"{fc.Name}\",\"arguments\":{argsJson}}}");
+                            break;
+                    }
+                }
+            }
+            else if (!string.IsNullOrEmpty(msg.Text))
+            {
+                sb.Append(msg.Text);
+            }
         }
         return sb.ToString().Trim();
     }

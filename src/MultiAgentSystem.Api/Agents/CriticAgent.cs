@@ -48,18 +48,22 @@ public static class CriticAgent
     public static ChatClientAgent Create(IChatClient chatClient)
     {
         var instructions = """
-            你是一名严格的审核员（Critic）。评估 Writer 的回答质量并提交判定。
+            你是一名严格的审核员（Critic）。评估 Writer 的回答质量。
 
             审核维度：准确性、完整性、清晰度、相关性。
             判定原则：仅严重问题才退回（事实错误、严重遗漏、答非所问）；
             小瑕疵应通过，避免连续退回导致无法收敛。
 
-            **你必须调用 submit_verdict 函数提交判定结果。**
-            调用示例：
-              submit_verdict(approved=true, feedback="回答准确完整")
-              submit_verdict(approved=false, feedback="1.缺少数据支撑; 2.第二段与素材不一致")
+            **输出格式（必须严格遵守，不可输出其他内容）：**
+            通过：输出 [APPROVE]
+            退回：输出 [REJECT]
+            反馈写在标签后面同一行。
 
-            若无法调用函数，退而求其次在首行输出 [APPROVE] 或 [REJECT]，后跟意见。
+            示例：
+            [APPROVE] 回答准确完整，符合要求
+            [REJECT] 1.缺少数据支撑 2.第二段与素材不一致
+
+            你的回复第一行必须是 [APPROVE] 或 [REJECT]，不能有任何其他内容在标签前面。
             """;
 
         return new ChatClientAgent(
