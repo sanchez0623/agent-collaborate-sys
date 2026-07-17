@@ -1,0 +1,96 @@
+# ============================================================
+# MultiAgentSystem .gitignore
+# 覆盖：.NET / Node / Vite / IDE / OS / 本地数据
+# ============================================================
+
+# ---------- .NET ----------
+## 编译产物
+**/bin/
+**/obj/
+## NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+## 本地 SQLite 数据库（含对话历史/CRM/RAG，禁止入库）
+*.db
+*.db-shm
+*.db-wal
+multiagent.db*
+## 应用密钥（用户机密，禁止入库）
+appsettings.json
+appsettings.Development.json
+appsettings.Local.json
+appsettings.Production.json
+secrets.json
+
+# ---------- 日志 ----------
+logs/
+
+# ---------- Node / 前端 ----------
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/.vite/
+**/coverage/
+## TypeScript 增量构建缓存
+*.tsbuildinfo
+**/*.tsbuildinfo
+## 包管理锁文件保留（package-lock.json 需入库以保证一致性）
+## 如使用 pnpm/yarn：保留 pnpm-lock.yaml / yarn.lock
+## 本地 env
+.env
+.env.local
+.env.*.local
+
+# ---------- 日志 ----------
+*.log
+backend.log
+frontend-dev.log
+logs/
+*.log.*
+
+# ---------- IDE / 编辑器 ----------
+## Visual Studio / Rider
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+## VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+## Trae / Cursor
+.trae/
+.cursor/
+.traeignore
+## macOS / Windows
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- WorkBuddy / 工作区 ----------
+.workbuddy/
+
+# ---------- 临时与缓存 ----------
+*.tmp
+*.bak
+*.swp
+*~
+.tmp/
+tmp/
+.cache/
+
+# ---------- 其他 ----------
+## 生成文档（Swagger 生成）
+**/swagger*.json
+## 本地草稿与笔记
+scratch/
+notes-local/

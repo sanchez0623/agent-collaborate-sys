@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 生成XML文档文件，供Swagger读取 /// 注释 -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- 抑制公共API缺失注释的警告（顶级语句/record场景常见） -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <!-- MVP-0阶段：仅引入Swagger用于API调试，其余用原生HttpClient调用DeepSeek API -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.13.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.13.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0-preview.6.26359.118" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.0.0" />
+    <!-- MVP-4：JWT 鉴权（System.IdentityModel.Tokens.Jwt + Microsoft.IdentityModel.Tokens） -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.3.0" />
+    <!-- MVP-3：PDF 文本提取（替代正则方案，支持 FlateDecode 压缩流 + 中文字体） -->
+    <PackageReference Include="PdfPig" Version="0.1.15" />
+    <!-- 可观测性：结构化日志（Serilog） -->
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+  </ItemGroup>
+
+</Project>
