@@ -191,9 +191,10 @@ public class EvalService
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var capturedEvents = new List<OrchestrationEvent>();
 
+        IOrchestrationStrategy? strategy = null;
         try
         {
-            var strategy = ResolveStrategy(mode, ragOn);
+            strategy = ResolveStrategy(mode, ragOn);
             var evalSessionId = $"eval_{Guid.NewGuid():N[..8]}";
             ApprovalCoordinator.CurrentSessionId = evalSessionId;
 
@@ -236,12 +237,15 @@ public class EvalService
             result.ErrorMessage = $"超时 ({timeoutSec}s)";
             result.Dimensions = GetErrorDimensions(result.ErrorMessage);
             result.Success = false;
+            _logger.LogWarning("用例超时: case=#{Id} mode={Mode}", tc.Id, mode);
             return result;
         }
         catch (Exception ex)
         {
             result.ErrorMessage = ex.Message;
             result.Dimensions = GetErrorDimensions(ex.Message);
+            _logger.LogError(ex, "用例执行失败: case=#{Id} mode={Mode} strategy={Strategy}",
+                tc.Id, mode, strategy.GetType().Name);
             return result;
         }
         finally { sw.Stop(); }
