@@ -1,3 +1,4 @@
+using System.Data.Common;
 // ============================================================
 // KnowledgeStore - RAG 知识库 SQLite 数据层
 //
@@ -15,6 +16,7 @@
 //   - 跨模块联表查询便利（如审计日志与文档操作关联）
 // ============================================================
 
+using MultiAgentSystem.Api.Data;
 using Microsoft.Data.Sqlite;
 using System.Text.Json;
 using MultiAgentSystem.Api.Models;
@@ -23,20 +25,19 @@ namespace MultiAgentSystem.Api.Services;
 
 public class KnowledgeStore
 {
-    private readonly string _connStr;
+    private readonly IDbConnectionFactory _db;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public KnowledgeStore(string dbPath = "multiagent.db")
+    public KnowledgeStore(IDbConnectionFactory db)
     {
-        dbPath = Environment.GetEnvironmentVariable("DB_PATH") ?? dbPath;
-        _connStr = $"Data Source={dbPath}";
+        _db = db;
         EnsureCreated();
     }
 
     // ---------- 建表 ----------
     private void EnsureCreated()
     {
-        using var conn = new SqliteConnection(_connStr);
+        using var conn = _db.CreateConnection();
         conn.Open();
         using var cmd = conn.CreateCommand();
         // 注：embedding 字段存 JSON 文本（float[] 序列化），便于调试查看
@@ -126,7 +127,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             // 聚合统计：每个库的文档数 + 分片数
@@ -159,7 +160,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -168,7 +169,7 @@ public class KnowledgeStore
                     (SELECT COUNT(*) FROM document_chunks c WHERE c.database_id = kb.id)
                 FROM knowledge_bases kb WHERE kb.id=@id;
                 """;
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParam("@id", id);
             using var r = await cmd.ExecuteReaderAsync();
             if (!await r.ReadAsync()) return null;
             return new KnowledgeBase
@@ -187,7 +188,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -195,9 +196,9 @@ public class KnowledgeStore
                 VALUES (@name, @desc, @t);
                 SELECT last_insert_rowid();
                 """;
-            cmd.Parameters.AddWithValue("@name", name);
-            cmd.Parameters.AddWithValue("@desc", description ?? "");
-            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@name", name);
+            cmd.AddParam("@desc", description ?? "");
+            cmd.AddParam("@t", DateTime.UtcNow.ToString("o"));
             return Convert.ToInt32(await cmd.ExecuteScalarAsync());
         });
     }
@@ -206,7 +207,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             // 级联删除：分片 → 文档 → 知识库（SQLite 无 ON DELETE CASCADE，需手动）
             using var tx = conn.BeginTransaction();
@@ -215,19 +216,19 @@ public class KnowledgeStore
                 using var c1 = conn.CreateCommand();
                 c1.Transaction = tx;
                 c1.CommandText = "DELETE FROM document_chunks WHERE database_id=@id;";
-                c1.Parameters.AddWithValue("@id", id);
+                c1.AddParam("@id", id);
                 await c1.ExecuteNonQueryAsync();
 
                 using var c2 = conn.CreateCommand();
                 c2.Transaction = tx;
                 c2.CommandText = "DELETE FROM knowledge_documents WHERE database_id=@id;";
-                c2.Parameters.AddWithValue("@id", id);
+                c2.AddParam("@id", id);
                 await c2.ExecuteNonQueryAsync();
 
                 using var c3 = conn.CreateCommand();
                 c3.Transaction = tx;
                 c3.CommandText = "DELETE FROM knowledge_bases WHERE id=@id;";
-                c3.Parameters.AddWithValue("@id", id);
+                c3.AddParam("@id", id);
                 var rows = await c3.ExecuteNonQueryAsync();
 
                 tx.Commit();
@@ -248,14 +249,14 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 SELECT id, database_id, file_name, file_size, file_type, status, chunk_count, created_at, error_message
                 FROM knowledge_documents WHERE database_id=@db ORDER BY id DESC;
                 """;
-            cmd.Parameters.AddWithValue("@db", databaseId);
+            cmd.AddParam("@db", databaseId);
             var list = new List<KnowledgeDocument>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -268,14 +269,14 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 SELECT id, database_id, file_name, file_size, file_type, status, chunk_count, created_at, error_message
                 FROM knowledge_documents WHERE id=@id;
                 """;
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParam("@id", id);
             using var r = await cmd.ExecuteReaderAsync();
             return await r.ReadAsync() ? ReadDocument(r) : null;
         });
@@ -285,7 +286,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -293,13 +294,13 @@ public class KnowledgeStore
                 VALUES (@db, @name, @size, @type, @st, 0, @t, @err);
                 SELECT last_insert_rowid();
                 """;
-            cmd.Parameters.AddWithValue("@db", doc.DatabaseId);
-            cmd.Parameters.AddWithValue("@name", doc.FileName);
-            cmd.Parameters.AddWithValue("@size", doc.FileSize);
-            cmd.Parameters.AddWithValue("@type", doc.FileType);
-            cmd.Parameters.AddWithValue("@st", doc.Status.ToString());
-            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
-            cmd.Parameters.AddWithValue("@err", doc.ErrorMessage ?? "");
+            cmd.AddParam("@db", doc.DatabaseId);
+            cmd.AddParam("@name", doc.FileName);
+            cmd.AddParam("@size", doc.FileSize);
+            cmd.AddParam("@type", doc.FileType);
+            cmd.AddParam("@st", doc.Status.ToString());
+            cmd.AddParam("@t", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@err", doc.ErrorMessage ?? "");
             return Convert.ToInt32(await cmd.ExecuteScalarAsync());
         });
     }
@@ -308,15 +309,15 @@ public class KnowledgeStore
     {
         await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             // 失败时写入 error_message；成功/处理中清空旧错误（避免残留）
             cmd.CommandText = "UPDATE knowledge_documents SET status=@st, chunk_count=@cc, error_message=@err WHERE id=@id;";
-            cmd.Parameters.AddWithValue("@id", id);
-            cmd.Parameters.AddWithValue("@st", status.ToString());
-            cmd.Parameters.AddWithValue("@cc", chunkCount);
-            cmd.Parameters.AddWithValue("@err", (object?)errorMessage ?? DBNull.Value);
+            cmd.AddParam("@id", id);
+            cmd.AddParam("@st", status.ToString());
+            cmd.AddParam("@cc", chunkCount);
+            cmd.AddParam("@err", (object?)errorMessage ?? DBNull.Value);
             await cmd.ExecuteNonQueryAsync();
         });
     }
@@ -325,7 +326,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var tx = conn.BeginTransaction();
             try
@@ -333,13 +334,13 @@ public class KnowledgeStore
                 using var c1 = conn.CreateCommand();
                 c1.Transaction = tx;
                 c1.CommandText = "DELETE FROM document_chunks WHERE document_id=@id;";
-                c1.Parameters.AddWithValue("@id", id);
+                c1.AddParam("@id", id);
                 await c1.ExecuteNonQueryAsync();
 
                 using var c2 = conn.CreateCommand();
                 c2.Transaction = tx;
                 c2.CommandText = "DELETE FROM knowledge_documents WHERE id=@id;";
-                c2.Parameters.AddWithValue("@id", id);
+                c2.AddParam("@id", id);
                 var rows = await c2.ExecuteNonQueryAsync();
 
                 tx.Commit();
@@ -360,7 +361,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -368,13 +369,13 @@ public class KnowledgeStore
                 VALUES (@doc, @db, @content, @page, @idx, @tc, @emb);
                 SELECT last_insert_rowid();
                 """;
-            cmd.Parameters.AddWithValue("@doc", chunk.DocumentId);
-            cmd.Parameters.AddWithValue("@db", chunk.DatabaseId);
-            cmd.Parameters.AddWithValue("@content", chunk.Content);
-            cmd.Parameters.AddWithValue("@page", chunk.PageNumber);
-            cmd.Parameters.AddWithValue("@idx", chunk.ChunkIndex);
-            cmd.Parameters.AddWithValue("@tc", chunk.TokenCount);
-            cmd.Parameters.AddWithValue("@emb", embedding is null || embedding.Length == 0
+            cmd.AddParam("@doc", chunk.DocumentId);
+            cmd.AddParam("@db", chunk.DatabaseId);
+            cmd.AddParam("@content", chunk.Content);
+            cmd.AddParam("@page", chunk.PageNumber);
+            cmd.AddParam("@idx", chunk.ChunkIndex);
+            cmd.AddParam("@tc", chunk.TokenCount);
+            cmd.AddParam("@emb", embedding is null || embedding.Length == 0
                 ? DBNull.Value
                 : JsonSerializer.Serialize(embedding));
             return Convert.ToInt32(await cmd.ExecuteScalarAsync());
@@ -386,14 +387,14 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 SELECT id, document_id, database_id, content, page_number, chunk_index, token_count
                 FROM document_chunks WHERE document_id=@doc ORDER BY chunk_index ASC;
                 """;
-            cmd.Parameters.AddWithValue("@doc", documentId);
+            cmd.AddParam("@doc", documentId);
             var list = new List<DocumentChunk>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync()) list.Add(ReadChunk(r));
@@ -406,7 +407,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -417,7 +418,7 @@ public class KnowledgeStore
                 WHERE c.database_id=@db
                 ORDER BY c.id ASC;
                 """;
-            cmd.Parameters.AddWithValue("@db", databaseId);
+            cmd.AddParam("@db", databaseId);
             var list = new List<(DocumentChunk, float[]?, string)>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -442,11 +443,11 @@ public class KnowledgeStore
     {
         await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM document_chunks WHERE document_id=@doc;";
-            cmd.Parameters.AddWithValue("@doc", documentId);
+            cmd.AddParam("@doc", documentId);
             await cmd.ExecuteNonQueryAsync();
         });
     }
@@ -456,14 +457,14 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 SELECT c.id, c.document_id, c.database_id, c.content, c.page_number, c.chunk_index, c.token_count
                 FROM document_chunks c WHERE c.id=@id;
                 """;
-            cmd.Parameters.AddWithValue("@id", chunkId);
+            cmd.AddParam("@id", chunkId);
             using var r = await cmd.ExecuteReaderAsync();
             return await r.ReadAsync() ? ReadChunk(r) : null;
         });
@@ -474,13 +475,13 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             if (databaseId.HasValue)
             {
                 cmd.CommandText = "SELECT COUNT(*) FROM document_chunks WHERE database_id=@db;";
-                cmd.Parameters.AddWithValue("@db", databaseId.Value);
+                cmd.AddParam("@db", databaseId.Value);
             }
             else
             {
@@ -496,7 +497,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             // 用 LIKE 做简易关键词匹配；生产级应用换 FTS5 全文索引
@@ -510,7 +511,7 @@ public class KnowledgeStore
                     WHERE c.database_id = @db AND c.content LIKE @kw
                     ORDER BY c.id LIMIT @limit;
                     """;
-                cmd.Parameters.AddWithValue("@db", databaseId.Value);
+                cmd.AddParam("@db", databaseId.Value);
             }
             else
             {
@@ -522,8 +523,8 @@ public class KnowledgeStore
                     ORDER BY c.id LIMIT @limit;
                     """;
             }
-            cmd.Parameters.AddWithValue("@kw", like);
-            cmd.Parameters.AddWithValue("@limit", limit);
+            cmd.AddParam("@kw", like);
+            cmd.AddParam("@limit", limit);
             var list = new List<(int, int, string, int, string)>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -539,7 +540,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -547,10 +548,10 @@ public class KnowledgeStore
                 VALUES (@sid, @type, @content, @t);
                 SELECT last_insert_rowid();
                 """;
-            cmd.Parameters.AddWithValue("@sid", sessionId);
-            cmd.Parameters.AddWithValue("@type", type.ToString());
-            cmd.Parameters.AddWithValue("@content", content);
-            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@sid", sessionId);
+            cmd.AddParam("@type", type.ToString());
+            cmd.AddParam("@content", content);
+            cmd.AddParam("@t", DateTime.UtcNow.ToString("o"));
             return Convert.ToInt32(await cmd.ExecuteScalarAsync());
         });
     }
@@ -559,18 +560,18 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id, session_id, type, content, created_at FROM memory_records WHERE session_id=@sid";
-            cmd.Parameters.AddWithValue("@sid", sessionId);
+            cmd.AddParam("@sid", sessionId);
             if (type.HasValue)
             {
                 cmd.CommandText += " AND type=@t";
-                cmd.Parameters.AddWithValue("@t", type.Value.ToString());
+                cmd.AddParam("@t", type.Value.ToString());
             }
             cmd.CommandText += " ORDER BY id ASC LIMIT @lim;";
-            cmd.Parameters.AddWithValue("@lim", limit);
+            cmd.AddParam("@lim", limit);
             var list = new List<MemoryRecord>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -590,7 +591,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -598,9 +599,9 @@ public class KnowledgeStore
                 WHERE session_id=@sid AND content LIKE @kw
                 ORDER BY id DESC LIMIT @lim;
                 """;
-            cmd.Parameters.AddWithValue("@sid", sessionId);
-            cmd.Parameters.AddWithValue("@kw", $"%{keyword}%");
-            cmd.Parameters.AddWithValue("@lim", limit);
+            cmd.AddParam("@sid", sessionId);
+            cmd.AddParam("@kw", $"%{keyword}%");
+            cmd.AddParam("@lim", limit);
             var list = new List<MemoryRecord>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -623,7 +624,7 @@ public class KnowledgeStore
     {
         await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             // 简单策略：同 session+key 已存在则更新 value，否则插入
             using var cmd = conn.CreateCommand();
@@ -639,10 +640,10 @@ public class KnowledgeStore
                 INSERT INTO user_profiles (session_id, key, value, created_at)
                 VALUES (@sid, @k, @v, @t);
                 """;
-            cmd.Parameters.AddWithValue("@sid", sessionId);
-            cmd.Parameters.AddWithValue("@k", key);
-            cmd.Parameters.AddWithValue("@v", value);
-            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@sid", sessionId);
+            cmd.AddParam("@k", key);
+            cmd.AddParam("@v", value);
+            cmd.AddParam("@t", DateTime.UtcNow.ToString("o"));
             await cmd.ExecuteNonQueryAsync();
         });
     }
@@ -651,11 +652,11 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id, session_id, key, value, created_at FROM user_profiles WHERE session_id=@sid ORDER BY id ASC;";
-            cmd.Parameters.AddWithValue("@sid", sessionId);
+            cmd.AddParam("@sid", sessionId);
             var list = new List<UserProfile>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -678,7 +679,7 @@ public class KnowledgeStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             var stats = new Dictionary<string, int>();
             using var cmd = conn.CreateCommand();
@@ -699,7 +700,7 @@ public class KnowledgeStore
     }
 
     // ---------- Reader 映射 ----------
-    private static KnowledgeDocument ReadDocument(SqliteDataReader r) => new()
+    private static KnowledgeDocument ReadDocument(DbDataReader r) => new()
     {
         Id = r.GetInt32(0),
         DatabaseId = r.GetInt32(1),
@@ -712,7 +713,7 @@ public class KnowledgeStore
         ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8)
     };
 
-    private static DocumentChunk ReadChunk(SqliteDataReader r) => new()
+    private static DocumentChunk ReadChunk(DbDataReader r) => new()
     {
         Id = r.GetInt32(0),
         DocumentId = r.GetInt32(1),

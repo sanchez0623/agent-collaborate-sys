@@ -1,3 +1,4 @@
+using System.Data.Common;
 // ============================================================
 // BusinessStore - CRM/工单/审核/审计/用户 统一 SQLite 存储
 //
@@ -12,6 +13,7 @@
 //   approval_requests / audit_logs / users
 // ============================================================
 
+using MultiAgentSystem.Api.Data;
 using Microsoft.Data.Sqlite;
 using System.Security.Cryptography;
 using System.Text;
@@ -22,13 +24,12 @@ namespace MultiAgentSystem.Api.Services;
 
 public class BusinessStore
 {
-    private readonly string _connStr;
+    private readonly IDbConnectionFactory _db;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public BusinessStore(string dbPath = "multiagent.db")
+    public BusinessStore(IDbConnectionFactory db)
     {
-        dbPath = Environment.GetEnvironmentVariable("DB_PATH") ?? dbPath;
-        _connStr = $"Data Source={dbPath}";
+        _db = db;
         EnsureCreated();
         SeedData();
     }
@@ -36,7 +37,7 @@ public class BusinessStore
     // ---------- 建表 ----------
     private void EnsureCreated()
     {
-        using var conn = new SqliteConnection(_connStr);
+        using var conn = _db.CreateConnection();
         conn.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -125,7 +126,7 @@ public class BusinessStore
     // ---------- 预置演示数据 ----------
     private void SeedData()
     {
-        using var conn = new SqliteConnection(_connStr);
+        using var conn = _db.CreateConnection();
         conn.Open();
         // 仅在 users 为空时插入
         using var check = conn.CreateCommand();
@@ -153,9 +154,9 @@ public class BusinessStore
               ('为张三准备技术方案', '客户要求提供详细技术方案', '用户提交', 'Coder', '高', 'Processing', 'alice', @t, @t),
               ('跟进腾讯合作', '战略客户需要持续维护', 'Agent 创建', 'Consultant', '紧急', 'Pending', 'admin', @t, @t);
             """;
-        seed.Parameters.AddWithValue("@ah", adminHash);
-        seed.Parameters.AddWithValue("@uh", userHash);
-        seed.Parameters.AddWithValue("@t", now);
+        seed.AddParam("@ah", adminHash);
+        seed.AddParam("@uh", userHash);
+        seed.AddParam("@t", now);
         seed.ExecuteNonQuery();
     }
 
@@ -184,12 +185,12 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             var where = new List<string>();
-            if (!string.IsNullOrEmpty(owner)) { where.Add("owner = @owner"); cmd.Parameters.AddWithValue("@owner", owner); }
-            if (!string.IsNullOrEmpty(keyword)) { where.Add("(name LIKE @kw OR company LIKE @kw OR phone LIKE @kw)"); cmd.Parameters.AddWithValue("@kw", $"%{keyword}%"); }
+            if (!string.IsNullOrEmpty(owner)) { where.Add("owner = @owner"); cmd.AddParam("@owner", owner); }
+            if (!string.IsNullOrEmpty(keyword)) { where.Add("(name LIKE @kw OR company LIKE @kw OR phone LIKE @kw)"); cmd.AddParam("@kw", $"%{keyword}%"); }
             cmd.CommandText = "SELECT id,name,company,phone,email,level,owner,remark,created_at,updated_at FROM customers";
             if (where.Count > 0) cmd.CommandText += " WHERE " + string.Join(" AND ", where);
             cmd.CommandText += " ORDER BY id DESC;";
@@ -205,11 +206,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,name,company,phone,email,level,owner,remark,created_at,updated_at FROM customers WHERE id=@id;";
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParam("@id", id);
             using var r = await cmd.ExecuteReaderAsync();
             return await r.ReadAsync() ? ReadCustomer(r) : null;
         });
@@ -220,7 +221,7 @@ public class BusinessStore
         return await WithLock(async () =>
         {
             var now = DateTime.UtcNow;
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -228,14 +229,14 @@ public class BusinessStore
                 VALUES (@name,@company,@phone,@email,@level,@owner,@remark,@t,@t);
                 SELECT last_insert_rowid();
                 """;
-            cmd.Parameters.AddWithValue("@name", c.Name);
-            cmd.Parameters.AddWithValue("@company", c.Company);
-            cmd.Parameters.AddWithValue("@phone", c.Phone);
-            cmd.Parameters.AddWithValue("@email", c.Email);
-            cmd.Parameters.AddWithValue("@level", c.Level);
-            cmd.Parameters.AddWithValue("@owner", c.Owner);
-            cmd.Parameters.AddWithValue("@remark", (object?)c.Remark ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@t", now.ToString("o"));
+            cmd.AddParam("@name", c.Name);
+            cmd.AddParam("@company", c.Company);
+            cmd.AddParam("@phone", c.Phone);
+            cmd.AddParam("@email", c.Email);
+            cmd.AddParam("@level", c.Level);
+            cmd.AddParam("@owner", c.Owner);
+            cmd.AddParam("@remark", (object?)c.Remark ?? DBNull.Value);
+            cmd.AddParam("@t", now.ToString("o"));
             var id = Convert.ToInt32(await cmd.ExecuteScalarAsync());
             await AuditAsync(AuditLogType.DataChange, c.Owner, $"新建客户 #{id} {c.Name}", $"{{\"customer\":\"{c.Name}\"}}");
             return id;
@@ -247,22 +248,22 @@ public class BusinessStore
         return await WithLock(async () =>
         {
             var now = DateTime.UtcNow;
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 UPDATE customers SET name=@name,company=@company,phone=@phone,email=@email,
                     level=@level,owner=@owner,remark=@remark,updated_at=@t WHERE id=@id;
                 """;
-            cmd.Parameters.AddWithValue("@id", c.Id);
-            cmd.Parameters.AddWithValue("@name", c.Name);
-            cmd.Parameters.AddWithValue("@company", c.Company);
-            cmd.Parameters.AddWithValue("@phone", c.Phone);
-            cmd.Parameters.AddWithValue("@email", c.Email);
-            cmd.Parameters.AddWithValue("@level", c.Level);
-            cmd.Parameters.AddWithValue("@owner", c.Owner);
-            cmd.Parameters.AddWithValue("@remark", (object?)c.Remark ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@t", now.ToString("o"));
+            cmd.AddParam("@id", c.Id);
+            cmd.AddParam("@name", c.Name);
+            cmd.AddParam("@company", c.Company);
+            cmd.AddParam("@phone", c.Phone);
+            cmd.AddParam("@email", c.Email);
+            cmd.AddParam("@level", c.Level);
+            cmd.AddParam("@owner", c.Owner);
+            cmd.AddParam("@remark", (object?)c.Remark ?? DBNull.Value);
+            cmd.AddParam("@t", now.ToString("o"));
             var rows = await cmd.ExecuteNonQueryAsync();
             if (rows > 0) await AuditAsync(AuditLogType.DataChange, c.Owner, $"修改客户 #{c.Id}", null);
             return rows > 0;
@@ -273,11 +274,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM customers WHERE id=@id;";
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParam("@id", id);
             var rows = await cmd.ExecuteNonQueryAsync();
             if (rows > 0) await AuditAsync(AuditLogType.DataChange, actor, $"删除客户 #{id}", null);
             return rows > 0;
@@ -289,7 +290,7 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -297,11 +298,11 @@ public class BusinessStore
                 VALUES (@cid,@m,@c,@o,@t);
                 SELECT last_insert_rowid();
                 """;
-            cmd.Parameters.AddWithValue("@cid", f.CustomerId);
-            cmd.Parameters.AddWithValue("@m", f.Method);
-            cmd.Parameters.AddWithValue("@c", f.Content);
-            cmd.Parameters.AddWithValue("@o", f.Operator);
-            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@cid", f.CustomerId);
+            cmd.AddParam("@m", f.Method);
+            cmd.AddParam("@c", f.Content);
+            cmd.AddParam("@o", f.Operator);
+            cmd.AddParam("@t", DateTime.UtcNow.ToString("o"));
             var id = Convert.ToInt32(await cmd.ExecuteScalarAsync());
             await AuditAsync(AuditLogType.DataChange, f.Operator, $"添加跟进 #{id} 客户#{f.CustomerId}", f.Content);
             return id;
@@ -312,11 +313,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,customer_id,method,content,operator,created_at FROM followups WHERE id=@id LIMIT 1;";
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParam("@id", id);
             using var r = await cmd.ExecuteReaderAsync();
             if (await r.ReadAsync())
                 return new FollowUp
@@ -336,11 +337,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,customer_id,method,content,operator,created_at FROM followups WHERE customer_id=@cid ORDER BY id DESC;";
-            cmd.Parameters.AddWithValue("@cid", customerId);
+            cmd.AddParam("@cid", customerId);
             var list = new List<FollowUp>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -364,11 +365,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,title,description,source,assignee,priority,status,created_by,created_at,updated_at FROM tickets";
-            if (status.HasValue) { cmd.CommandText += " WHERE status=@s"; cmd.Parameters.AddWithValue("@s", status.Value.ToString()); }
+            if (status.HasValue) { cmd.CommandText += " WHERE status=@s"; cmd.AddParam("@s", status.Value.ToString()); }
             cmd.CommandText += " ORDER BY id DESC;";
             var list = new List<Ticket>();
             using var r = await cmd.ExecuteReaderAsync();
@@ -382,7 +383,7 @@ public class BusinessStore
         return await WithLock(async () =>
         {
             var now = DateTime.UtcNow;
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -390,14 +391,14 @@ public class BusinessStore
                 VALUES (@title,@desc,@src,@asg,@pri,@st,@by,@t,@t);
                 SELECT last_insert_rowid();
                 """;
-            cmd.Parameters.AddWithValue("@title", t.Title);
-            cmd.Parameters.AddWithValue("@desc", t.Description);
-            cmd.Parameters.AddWithValue("@src", t.Source);
-            cmd.Parameters.AddWithValue("@asg", t.Assignee);
-            cmd.Parameters.AddWithValue("@pri", t.Priority);
-            cmd.Parameters.AddWithValue("@st", t.Status.ToString());
-            cmd.Parameters.AddWithValue("@by", (object?)t.CreatedBy ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@t", now.ToString("o"));
+            cmd.AddParam("@title", t.Title);
+            cmd.AddParam("@desc", t.Description);
+            cmd.AddParam("@src", t.Source);
+            cmd.AddParam("@asg", t.Assignee);
+            cmd.AddParam("@pri", t.Priority);
+            cmd.AddParam("@st", t.Status.ToString());
+            cmd.AddParam("@by", (object?)t.CreatedBy ?? DBNull.Value);
+            cmd.AddParam("@t", now.ToString("o"));
             var id = Convert.ToInt32(await cmd.ExecuteScalarAsync());
             await AuditAsync(AuditLogType.DataChange, t.CreatedBy ?? "system", $"创建工单 #{id} {t.Title}", null);
             return id;
@@ -408,13 +409,13 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE tickets SET status=@s, updated_at=@t WHERE id=@id;";
-            cmd.Parameters.AddWithValue("@id", id);
-            cmd.Parameters.AddWithValue("@s", status.ToString());
-            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@id", id);
+            cmd.AddParam("@s", status.ToString());
+            cmd.AddParam("@t", DateTime.UtcNow.ToString("o"));
             var rows = await cmd.ExecuteNonQueryAsync();
             if (rows > 0) await AuditAsync(AuditLogType.DataChange, actor, $"工单 #{id} 状态→{status}", null);
             return rows > 0;
@@ -428,7 +429,7 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -436,13 +437,13 @@ public class BusinessStore
                 VALUES (@sid,@agent,@sys,@act,@param,@risk,'Pending',@t);
                 SELECT last_insert_rowid();
                 """;
-            cmd.Parameters.AddWithValue("@sid", a.SessionId);
-            cmd.Parameters.AddWithValue("@agent", a.Agent);
-            cmd.Parameters.AddWithValue("@sys", a.System);
-            cmd.Parameters.AddWithValue("@act", a.Action);
-            cmd.Parameters.AddWithValue("@param", a.Parameters);
-            cmd.Parameters.AddWithValue("@risk", a.RiskLevel);
-            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@sid", a.SessionId);
+            cmd.AddParam("@agent", a.Agent);
+            cmd.AddParam("@sys", a.System);
+            cmd.AddParam("@act", a.Action);
+            cmd.AddParam("@param", a.Parameters);
+            cmd.AddParam("@risk", a.RiskLevel);
+            cmd.AddParam("@t", DateTime.UtcNow.ToString("o"));
             return Convert.ToInt32(await cmd.ExecuteScalarAsync());
         });
     }
@@ -451,11 +452,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,session_id,agent,system,action,parameters,risk_level,status,reviewer,review_comment,created_at,reviewed_at FROM approval_requests WHERE id=@id;";
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParam("@id", id);
             using var r = await cmd.ExecuteReaderAsync();
             return await r.ReadAsync() ? ReadApproval(r) : null;
         });
@@ -465,11 +466,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,session_id,agent,system,action,parameters,risk_level,status,reviewer,review_comment,created_at,reviewed_at FROM approval_requests";
-            if (status.HasValue) { cmd.CommandText += " WHERE status=@s"; cmd.Parameters.AddWithValue("@s", status.Value.ToString()); }
+            if (status.HasValue) { cmd.CommandText += " WHERE status=@s"; cmd.AddParam("@s", status.Value.ToString()); }
             cmd.CommandText += " ORDER BY id DESC;";
             var list = new List<ApprovalRequest>();
             using var r = await cmd.ExecuteReaderAsync();
@@ -482,15 +483,15 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE approval_requests SET status=@s, reviewer=@r, review_comment=@c, reviewed_at=@t WHERE id=@id;";
-            cmd.Parameters.AddWithValue("@id", id);
-            cmd.Parameters.AddWithValue("@s", status.ToString());
-            cmd.Parameters.AddWithValue("@r", reviewer);
-            cmd.Parameters.AddWithValue("@c", (object?)comment ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@id", id);
+            cmd.AddParam("@s", status.ToString());
+            cmd.AddParam("@r", reviewer);
+            cmd.AddParam("@c", (object?)comment ?? DBNull.Value);
+            cmd.AddParam("@t", DateTime.UtcNow.ToString("o"));
             var rows = await cmd.ExecuteNonQueryAsync();
             if (rows > 0) await AuditAsync(AuditLogType.Approval, reviewer, $"审核 #{id} → {status}", comment);
             return rows > 0;
@@ -504,11 +505,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,username,password_hash,display_name,role,created_at FROM users WHERE username=@u;";
-            cmd.Parameters.AddWithValue("@u", username);
+            cmd.AddParam("@u", username);
             using var r = await cmd.ExecuteReaderAsync();
             if (!await r.ReadAsync()) return null;
             return new User
@@ -531,16 +532,16 @@ public class BusinessStore
         // 审计日志内部写入，避免与外层锁冲突，开独立连接
         try
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "INSERT INTO audit_logs (type,actor,action,detail,result,created_at) VALUES (@t,@a,@act,@d,@r,@time);";
-            cmd.Parameters.AddWithValue("@t", type.ToString());
-            cmd.Parameters.AddWithValue("@a", actor);
-            cmd.Parameters.AddWithValue("@act", action);
-            cmd.Parameters.AddWithValue("@d", (object?)detail ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@r", result);
-            cmd.Parameters.AddWithValue("@time", DateTime.UtcNow.ToString("o"));
+            cmd.AddParam("@t", type.ToString());
+            cmd.AddParam("@a", actor);
+            cmd.AddParam("@act", action);
+            cmd.AddParam("@d", (object?)detail ?? DBNull.Value);
+            cmd.AddParam("@r", result);
+            cmd.AddParam("@time", DateTime.UtcNow.ToString("o"));
             await cmd.ExecuteNonQueryAsync();
         }
         catch { /* 审计日志失败不应影响主流程 */ }
@@ -550,11 +551,11 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,type,actor,action,detail,result,created_at FROM audit_logs ORDER BY id DESC LIMIT @lim;";
-            cmd.Parameters.AddWithValue("@lim", limit);
+            cmd.AddParam("@lim", limit);
             var list = new List<AuditLog>();
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
@@ -579,7 +580,7 @@ public class BusinessStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             var stats = new Dictionary<string, int>();
             using var cmd = conn.CreateCommand();
@@ -600,7 +601,7 @@ public class BusinessStore
     }
 
     // ---------- Reader 映射 ----------
-    private static Customer ReadCustomer(SqliteDataReader r) => new()
+    private static Customer ReadCustomer(DbDataReader r) => new()
     {
         Id = r.GetInt32(0),
         Name = r.GetString(1),
@@ -614,7 +615,7 @@ public class BusinessStore
         UpdatedAt = DateTime.Parse(r.GetString(9))
     };
 
-    private static Ticket ReadTicket(SqliteDataReader r) => new()
+    private static Ticket ReadTicket(DbDataReader r) => new()
     {
         Id = r.GetInt32(0),
         Title = r.GetString(1),
@@ -628,7 +629,7 @@ public class BusinessStore
         UpdatedAt = DateTime.Parse(r.GetString(9))
     };
 
-    private static ApprovalRequest ReadApproval(SqliteDataReader r) => new()
+    private static ApprovalRequest ReadApproval(DbDataReader r) => new()
     {
         Id = r.GetInt32(0),
         SessionId = r.GetString(1),

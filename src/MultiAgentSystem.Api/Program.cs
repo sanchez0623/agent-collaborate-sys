@@ -82,10 +82,17 @@ builder.Services.AddSingleton<IChatClient>(sp =>
     return new ResilientChatClient(raw, maxRetries: 3, logger);
 });
 
-// ========== 3. 业务存储（CRM/工单/审核/审计/用户 统一 SQLite） ==========
-builder.Services.AddSingleton<BusinessStore>(_ => new BusinessStore("multiagent.db"));
+// ========== 3. 数据库工厂（IDbConnectionFactory，切 PostgreSQL 换实现即可） ==========
+builder.Services.AddSingleton<MultiAgentSystem.Api.Data.IDbConnectionFactory>(
+    _ => new MultiAgentSystem.Api.Data.SqliteConnectionFactory("multiagent.db"));
 
-// ========== 4. 对话历史存储 ==========
+// ========== 4. 业务存储 ==========
+builder.Services.AddSingleton<BusinessStore>();
+builder.Services.AddSingleton<KnowledgeStore>();
+builder.Services.AddSingleton<TestCaseStore>();
+builder.Services.AddSingleton<EvalReportStore>();
+
+// ConversationStore 暂时仍用直接字符串
 builder.Services.AddSingleton<ConversationStore>(_ => new ConversationStore("multiagent.db"));
 
 // ========== 5. Tavily 搜索工具 ==========
@@ -115,16 +122,12 @@ builder.Services.AddSingleton<CrmTools>();
 // EmailService：集成 Demo —— CRM 跟进 → 邮件生成 → 发送
 builder.Services.AddSingleton<EmailService>();
 
-// ========== 8a. MVP-5：评测体系 ==========
-builder.Services.AddSingleton<TestCaseStore>(_ => new TestCaseStore("multiagent.db"));
-builder.Services.AddSingleton<EvalReportStore>(_ => new EvalReportStore("multiagent.db"));
+// ========== 8a. MVP-5：评测服务 ==========
 builder.Services.AddSingleton<MetricCalculator>();
 builder.Services.AddSingleton<JudgeService>();
 builder.Services.AddSingleton<EvalService>();
 
 // ========== 8a. MVP-3：RAG 知识库 ==========
-// KnowledgeStore 复用 multiagent.db 文件，新增 5 张表
-builder.Services.AddSingleton<KnowledgeStore>(_ => new KnowledgeStore("multiagent.db"));
 // EmbeddingService 调 DeepSeek embedding API，失败降级为哈希向量
 builder.Services.AddSingleton<EmbeddingService>();
 // VectorStore：优先 Qdrant，不可用时降级为内存向量（无需 Docker 依赖）

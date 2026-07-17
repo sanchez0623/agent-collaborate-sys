@@ -147,7 +147,8 @@ public class CoreTests
     private static BusinessStore CreateTestStore()
     {
         var path = $"test_{Guid.NewGuid():N}.db";
-        var store = new BusinessStore(path);
+        var factory = new MultiAgentSystem.Api.Data.SqliteConnectionFactory(path);
+        var store = new BusinessStore(factory);
         return store;
     }
 

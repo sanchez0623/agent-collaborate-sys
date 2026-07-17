@@ -1,9 +1,11 @@
+using System.Data.Common;
 // ============================================================
 // TestCaseStore - 评测用例仓储（SQLite）
 // 预置 30 个标准用例覆盖 6 大场景
 // ============================================================
 
 using System.Text.Json;
+using MultiAgentSystem.Api.Data;
 using Microsoft.Data.Sqlite;
 using MultiAgentSystem.Api.Models;
 
@@ -11,12 +13,12 @@ namespace MultiAgentSystem.Api.Services;
 
 public class TestCaseStore
 {
-    private readonly string _connStr;
+    private readonly IDbConnectionFactory _db;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public TestCaseStore(string dbPath)
+    public TestCaseStore(IDbConnectionFactory db)
     {
-        _connStr = $"Data Source={dbPath}";
+        _db = db;
         InitAsync().GetAwaiter().GetResult();
     }
 
@@ -24,7 +26,7 @@ public class TestCaseStore
     {
         await WithLockAsync(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -44,7 +46,7 @@ public class TestCaseStore
 
         await WithLockAsync(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT COUNT(*) FROM eval_testcases WHERE is_preset=1;";
@@ -59,13 +61,13 @@ public class TestCaseStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = string.IsNullOrWhiteSpace(category)
                 ? "SELECT * FROM eval_testcases ORDER BY category, id;"
                 : "SELECT * FROM eval_testcases WHERE category=@cat ORDER BY id;";
-            if (!string.IsNullOrWhiteSpace(category)) cmd.Parameters.AddWithValue("@cat", category);
+            if (!string.IsNullOrWhiteSpace(category)) cmd.AddParam("@cat", category);
             return await ReadCasesAsync(cmd);
         });
     }
@@ -74,11 +76,11 @@ public class TestCaseStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT * FROM eval_testcases WHERE id=@id;";
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParam("@id", id);
             return (await ReadCasesAsync(cmd)).FirstOrDefault();
         });
     }
@@ -88,7 +90,7 @@ public class TestCaseStore
         tc.IsPreset = false;
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             return await InsertInternalAsync(conn, tc);
         });
@@ -98,11 +100,11 @@ public class TestCaseStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM eval_testcases WHERE id=@id AND is_preset=0;";
-            cmd.Parameters.AddWithValue("@id", id);
+            cmd.AddParam("@id", id);
             return await cmd.ExecuteNonQueryAsync() > 0;
         });
     }
@@ -116,7 +118,7 @@ public class TestCaseStore
                 ["full"] = new(), ["quick-smoke"] = new(), ["rag"] = new(),
                 ["tool"] = new(), ["crm"] = new()
             };
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id,title,category,tags FROM eval_testcases ORDER BY id;";
@@ -138,7 +140,7 @@ public class TestCaseStore
 
     // ---------- 内部 ----------
 
-    private async Task<int> InsertInternalAsync(SqliteConnection conn, EvalTestCase tc)
+    private async Task<int> InsertInternalAsync(DbConnection conn, EvalTestCase tc)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -148,21 +150,21 @@ public class TestCaseStore
             VALUES (@t,@c,@tag,@q,@ek,@am,@rk,@ki,@etc,@w,@ip);
             SELECT last_insert_rowid();
             """;
-        cmd.Parameters.AddWithValue("@t", tc.Title);
-        cmd.Parameters.AddWithValue("@c", tc.Category);
-        cmd.Parameters.AddWithValue("@tag", tc.Tags ?? "");
-        cmd.Parameters.AddWithValue("@q", tc.Question);
-        cmd.Parameters.AddWithValue("@ek", tc.ExpectedKeyPoints ?? "");
-        cmd.Parameters.AddWithValue("@am", tc.ApplicableModes ?? "");
-        cmd.Parameters.AddWithValue("@rk", tc.RequiresKnowledgeBase ? 1 : 0);
-        cmd.Parameters.AddWithValue("@ki", tc.KnowledgeBaseId as object ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@etc", tc.ExpectedToolCalls ?? "");
-        cmd.Parameters.AddWithValue("@w", JsonSerializer.Serialize(tc.Weights));
-        cmd.Parameters.AddWithValue("@ip", tc.IsPreset ? 1 : 0);
+        cmd.AddParam("@t", tc.Title);
+        cmd.AddParam("@c", tc.Category);
+        cmd.AddParam("@tag", tc.Tags ?? "");
+        cmd.AddParam("@q", tc.Question);
+        cmd.AddParam("@ek", tc.ExpectedKeyPoints ?? "");
+        cmd.AddParam("@am", tc.ApplicableModes ?? "");
+        cmd.AddParam("@rk", tc.RequiresKnowledgeBase ? 1 : 0);
+        cmd.AddParam("@ki", tc.KnowledgeBaseId as object ?? DBNull.Value);
+        cmd.AddParam("@etc", tc.ExpectedToolCalls ?? "");
+        cmd.AddParam("@w", JsonSerializer.Serialize(tc.Weights));
+        cmd.AddParam("@ip", tc.IsPreset ? 1 : 0);
         return Convert.ToInt32(await cmd.ExecuteScalarAsync()!);
     }
 
-    private static async Task<List<EvalTestCase>> ReadCasesAsync(SqliteCommand cmd)
+    private static async Task<List<EvalTestCase>> ReadCasesAsync(DbCommand cmd)
     {
         var list = new List<EvalTestCase>();
         using var r = await cmd.ExecuteReaderAsync();

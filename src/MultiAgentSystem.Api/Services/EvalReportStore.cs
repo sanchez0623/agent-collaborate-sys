@@ -1,8 +1,10 @@
+using System.Data.Common;
 // ============================================================
 // EvalReportStore - 评测报告仓储（SQLite）
 // ============================================================
 
 using System.Text.Json;
+using MultiAgentSystem.Api.Data;
 using Microsoft.Data.Sqlite;
 using MultiAgentSystem.Api.Models;
 
@@ -10,12 +12,12 @@ namespace MultiAgentSystem.Api.Services;
 
 public class EvalReportStore
 {
-    private readonly string _connStr;
+    private readonly IDbConnectionFactory _db;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
-    public EvalReportStore(string dbPath)
+    public EvalReportStore(IDbConnectionFactory db)
     {
-        _connStr = $"Data Source={dbPath}";
+        _db = db;
         InitAsync().GetAwaiter().GetResult();
     }
 
@@ -23,7 +25,7 @@ public class EvalReportStore
     {
         await WithLockAsync(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -76,7 +78,7 @@ public class EvalReportStore
     {
         await WithLockAsync(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -85,19 +87,19 @@ public class EvalReportStore
                  overall_score,avg_response_ms,total_tokens,comparison_json,created_at,completed_at)
                 VALUES (@id,@cs,@ms,@st,@tc,@sc,@fc,@os,@ar,@tt,@cj,@ca,@cp);
                 """;
-            cmd.Parameters.AddWithValue("@id", task.Id);
-            cmd.Parameters.AddWithValue("@cs", task.CaseSet);
-            cmd.Parameters.AddWithValue("@ms", JsonSerializer.Serialize(task.Modes));
-            cmd.Parameters.AddWithValue("@st", task.Status);
-            cmd.Parameters.AddWithValue("@tc", task.TotalCases);
-            cmd.Parameters.AddWithValue("@sc", task.CompletedCases);
-            cmd.Parameters.AddWithValue("@fc", task.FailedCases);
-            cmd.Parameters.AddWithValue("@os", 0.0);
-            cmd.Parameters.AddWithValue("@ar", 0);
-            cmd.Parameters.AddWithValue("@tt", 0);
-            cmd.Parameters.AddWithValue("@cj", DBNull.Value);
-            cmd.Parameters.AddWithValue("@ca", task.CreatedAt.ToString("o"));
-            cmd.Parameters.AddWithValue("@cp", task.CompletedAt?.ToString("o") as object ?? DBNull.Value);
+            cmd.AddParam("@id", task.Id);
+            cmd.AddParam("@cs", task.CaseSet);
+            cmd.AddParam("@ms", JsonSerializer.Serialize(task.Modes));
+            cmd.AddParam("@st", task.Status);
+            cmd.AddParam("@tc", task.TotalCases);
+            cmd.AddParam("@sc", task.CompletedCases);
+            cmd.AddParam("@fc", task.FailedCases);
+            cmd.AddParam("@os", 0.0);
+            cmd.AddParam("@ar", 0);
+            cmd.AddParam("@tt", 0);
+            cmd.AddParam("@cj", DBNull.Value);
+            cmd.AddParam("@ca", task.CreatedAt.ToString("o"));
+            cmd.AddParam("@cp", task.CompletedAt?.ToString("o") as object ?? DBNull.Value);
             await cmd.ExecuteNonQueryAsync();
         });
     }
@@ -106,15 +108,15 @@ public class EvalReportStore
     {
         await WithLockAsync(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE eval_reports SET completed_cases=success_cases=@c,failed_cases=@f,status=@st WHERE task_id=@id;";
             cmd.CommandText = "UPDATE eval_reports SET success_cases=@c, failed_cases=@f, status=@st WHERE task_id=@id;";
-            cmd.Parameters.AddWithValue("@c", completed);
-            cmd.Parameters.AddWithValue("@f", failed);
-            cmd.Parameters.AddWithValue("@st", status);
-            cmd.Parameters.AddWithValue("@id", taskId);
+            cmd.AddParam("@c", completed);
+            cmd.AddParam("@f", failed);
+            cmd.AddParam("@st", status);
+            cmd.AddParam("@id", taskId);
             await cmd.ExecuteNonQueryAsync();
         });
     }
@@ -123,7 +125,7 @@ public class EvalReportStore
     {
         await WithLockAsync(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -133,15 +135,15 @@ public class EvalReportStore
                     comparison_json=@cj, completed_at=datetime('now')
                 WHERE task_id=@id;
                 """;
-            cmd.Parameters.AddWithValue("@st", "completed");
-            cmd.Parameters.AddWithValue("@sc", report.SuccessCases);
-            cmd.Parameters.AddWithValue("@fc", report.FailedCases);
-            cmd.Parameters.AddWithValue("@os", report.OverallScore);
-            cmd.Parameters.AddWithValue("@ar", (long)report.AvgResponseMs);
-            cmd.Parameters.AddWithValue("@tt", report.TotalTokens);
-            cmd.Parameters.AddWithValue("@cj", report.Comparison != null
+            cmd.AddParam("@st", "completed");
+            cmd.AddParam("@sc", report.SuccessCases);
+            cmd.AddParam("@fc", report.FailedCases);
+            cmd.AddParam("@os", report.OverallScore);
+            cmd.AddParam("@ar", (long)report.AvgResponseMs);
+            cmd.AddParam("@tt", report.TotalTokens);
+            cmd.AddParam("@cj", report.Comparison != null
                 ? JsonSerializer.Serialize(report.Comparison) : (object)DBNull.Value);
-            cmd.Parameters.AddWithValue("@id", report.TaskId);
+            cmd.AddParam("@id", report.TaskId);
             await cmd.ExecuteNonQueryAsync();
         });
     }
@@ -150,11 +152,11 @@ public class EvalReportStore
     {
         return await WithLock(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT * FROM eval_reports WHERE task_id=@id;";
-            cmd.Parameters.AddWithValue("@id", taskId);
+            cmd.AddParam("@id", taskId);
             using var r = await cmd.ExecuteReaderAsync();
             if (await r.ReadAsync())
             {
@@ -182,11 +184,11 @@ public class EvalReportStore
         return await WithLock(async () =>
         {
             var list = new List<EvalReport>();
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT * FROM eval_reports ORDER BY created_at DESC LIMIT @lim;";
-            cmd.Parameters.AddWithValue("@lim", limit);
+            cmd.AddParam("@lim", limit);
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
             {
@@ -218,7 +220,7 @@ public class EvalReportStore
     {
         await WithLockAsync(async () =>
         {
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
@@ -229,24 +231,24 @@ public class EvalReportStore
                  judge_raw_output)
                 VALUES (@ti,@tci,@m,@re,@s,@em,@dj,@rt,@tt,@it,@ot,@ta,@etc,@atc,@cl,@ao,@tl,@jr);
                 """;
-            cmd.Parameters.AddWithValue("@ti", result.TaskId);
-            cmd.Parameters.AddWithValue("@tci", result.TestCaseId);
-            cmd.Parameters.AddWithValue("@m", result.Mode);
-            cmd.Parameters.AddWithValue("@re", result.RagEnabled ? 1 : 0);
-            cmd.Parameters.AddWithValue("@s", result.Success ? 1 : 0);
-            cmd.Parameters.AddWithValue("@em", result.ErrorMessage as object ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@dj", JsonSerializer.Serialize(result.Dimensions));
-            cmd.Parameters.AddWithValue("@rt", result.ResponseTimeMs);
-            cmd.Parameters.AddWithValue("@tt", result.TotalTokens);
-            cmd.Parameters.AddWithValue("@it", result.InputTokens);
-            cmd.Parameters.AddWithValue("@ot", result.OutputTokens);
-            cmd.Parameters.AddWithValue("@ta", result.ToolCallAccuracy);
-            cmd.Parameters.AddWithValue("@etc", result.ExpectedToolCount);
-            cmd.Parameters.AddWithValue("@atc", result.ActualToolCount);
-            cmd.Parameters.AddWithValue("@cl", result.ConversationLog);
-            cmd.Parameters.AddWithValue("@ao", result.AgentOutputs);
-            cmd.Parameters.AddWithValue("@tl", result.ToolCallLog);
-            cmd.Parameters.AddWithValue("@jr", result.JudgeRawOutput);
+            cmd.AddParam("@ti", result.TaskId);
+            cmd.AddParam("@tci", result.TestCaseId);
+            cmd.AddParam("@m", result.Mode);
+            cmd.AddParam("@re", result.RagEnabled ? 1 : 0);
+            cmd.AddParam("@s", result.Success ? 1 : 0);
+            cmd.AddParam("@em", result.ErrorMessage as object ?? DBNull.Value);
+            cmd.AddParam("@dj", JsonSerializer.Serialize(result.Dimensions));
+            cmd.AddParam("@rt", result.ResponseTimeMs);
+            cmd.AddParam("@tt", result.TotalTokens);
+            cmd.AddParam("@it", result.InputTokens);
+            cmd.AddParam("@ot", result.OutputTokens);
+            cmd.AddParam("@ta", result.ToolCallAccuracy);
+            cmd.AddParam("@etc", result.ExpectedToolCount);
+            cmd.AddParam("@atc", result.ActualToolCount);
+            cmd.AddParam("@cl", result.ConversationLog);
+            cmd.AddParam("@ao", result.AgentOutputs);
+            cmd.AddParam("@tl", result.ToolCallLog);
+            cmd.AddParam("@jr", result.JudgeRawOutput);
             await cmd.ExecuteNonQueryAsync();
         });
     }
@@ -256,11 +258,11 @@ public class EvalReportStore
         return await WithLock(async () =>
         {
             var list = new List<EvalCaseResult>();
-            using var conn = new SqliteConnection(_connStr);
+            using var conn = _db.CreateConnection();
             await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT * FROM eval_case_results WHERE task_id=@id ORDER BY id;";
-            cmd.Parameters.AddWithValue("@id", taskId);
+            cmd.AddParam("@id", taskId);
             using var r = await cmd.ExecuteReaderAsync();
             while (await r.ReadAsync())
             {
@@ -335,7 +337,7 @@ public class EvalReportStore
         finally { _lock.Release(); }
     }
 
-    private static DateTime SafeDate(SqliteDataReader r, int ordinal)
+    private static DateTime SafeDate(DbDataReader r, int ordinal)
     {
         if (r.IsDBNull(ordinal)) return DateTime.MinValue;
         try { return DateTime.Parse(r.GetString(ordinal)); }
