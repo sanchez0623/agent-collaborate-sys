@@ -4,7 +4,7 @@
 // 设计意图：
 //   - DeepSeek 不提供 embedding API，只保留作 chat 模型
 //   - Embedding 独立配置段，支持多 provider 切换
-//   - 当前默认：硅基流动 BAAI/bge-large-zh-v1.5（中文检索效果优秀）
+//   - 当前默认：硅基流动 BAAI/bge-m3（中英多语，8192 tokens，1024维）
 //   - 可切换：智谱 GLM embedding-2 / OpenAI text-embedding-3-small / 本地哈希降级
 //   - API 不可用时降级为哈希向量，保证演示流程不中断
 //
@@ -12,9 +12,9 @@
 //   "Embedding": {
 //     "Provider": "siliconflow",          // siliconflow | zhipu | openai | hash
 //     "BaseUrl": "https://api.siliconflow.cn",
-//     "ModelId": "BAAI/bge-large-zh-v1.5",
+//     "ModelId": "BAAI/bge-m3",
 //     "ApiKey": "sk-xxx",
-//     "Dimension": 1024                   // bge-large-zh 固定 1024 维；仅 Qwen3 系列支持自定义维度
+//     "Dimension": 1024                   // bge-m3 固定 1024 维；仅 Qwen3 系列支持自定义维度
 //   }
 //
 // 重试与降级策略（修复批量上传 429 限流导致大面积失败）：
@@ -48,7 +48,7 @@ public class EmbeddingService
         var embSection = config.GetSection("Embedding");
         _provider = embSection["Provider"] ?? "hash";
         _baseUrl = (embSection["BaseUrl"] ?? "https://api.siliconflow.cn").TrimEnd('/');
-        _model = embSection["ModelId"] ?? "BAAI/bge-large-zh-v1.5";
+        _model = embSection["ModelId"] ?? "BAAI/bge-m3";
         _apiKey = embSection["ApiKey"] ?? "";
         _dimension = int.TryParse(embSection["Dimension"], out var d) ? d : 1024;
 
