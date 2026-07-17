@@ -23,6 +23,7 @@ public class QdrantVectorStore : IVectorStore, IDisposable
         _vectorSize = config.GetValue<uint>("Embedding:Dimension", 1024);
         _client = new QdrantClient(new Uri(qdrantUrl));
         _logger = logger;
+        _logger.LogInformation("QdrantVectorStore 已连接: {Url}", qdrantUrl);
     }
 
     private async Task EnsureCollectionAsync()
@@ -118,6 +119,9 @@ public class QdrantVectorStore : IVectorStore, IDisposable
             queryVector,
             filter,
             limit: (ulong)topK);
+
+        _logger.LogDebug("Qdrant 搜索: topK={TopK} dbId={DbId} 命中={Hits} top1={Top1:F4}",
+            topK, databaseId, results.Count, results.FirstOrDefault()?.Score ?? 0);
 
         return results
             .Select(r => ((int)r.Id.Num, (double)r.Score))
