@@ -3,6 +3,7 @@
 // 配置驱动：appsettings.json → Database:Provider 选 SQLite/PgSQL
 // ============================================================
 
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MultiAgentSystem.Api.Models;
 
@@ -10,16 +11,16 @@ namespace MultiAgentSystem.Api.Data;
 
 public class MultiAgentDbContext : DbContext
 {
-    // CRM
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<FollowUp> FollowUps => Set<FollowUp>();
     public DbSet<Ticket> Tickets => Set<Ticket>();
     public DbSet<ApprovalRequest> Approvals => Set<ApprovalRequest>();
-
-    // 审计 + 用户
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
-
-    // 评测
+    public DbSet<User> Users => Set<User>();
+    public DbSet<KnowledgeBase> KnowledgeBases => Set<KnowledgeBase>();
+    public DbSet<KnowledgeDocument> KnowledgeDocuments => Set<KnowledgeDocument>();
+    public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
+    public DbSet<MemoryRecord> MemoryRecords => Set<MemoryRecord>();
     public DbSet<EvalTestCase> EvalTestCases => Set<EvalTestCase>();
     public DbSet<EvalReportEntity> EvalReports => Set<EvalReportEntity>();
     public DbSet<EvalCaseResultEntity> EvalCaseResults => Set<EvalCaseResultEntity>();
@@ -28,73 +29,24 @@ public class MultiAgentDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder m)
     {
-        // ===== CRM =====
-        m.Entity<Customer>(e =>
-        {
-            e.ToTable("customers");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Name).IsRequired();
-            e.Property(x => x.Level).HasDefaultValue("普通");
-        });
+        var jo = new JsonSerializerOptions();
 
-        m.Entity<FollowUp>(e =>
-        {
-            e.ToTable("followups");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')");
-        });
-
-        m.Entity<Ticket>(e =>
-        {
-            e.ToTable("tickets");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Status).HasDefaultValue("未处理");
-            e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')");
-        });
-
-        m.Entity<ApprovalRequest>(e =>
-        {
-            e.ToTable("approval_requests");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Status).HasDefaultValue("pending");
-        });
-
-        // ===== 审计 =====
-        m.Entity<AuditLog>(e =>
-        {
-            e.ToTable("audit_logs");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Type).HasConversion<string>();
-            e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')");
-        });
-
-        // ===== 评测 =====
-        m.Entity<EvalTestCase>(e =>
-        {
-            e.ToTable("eval_testcases");
-            e.HasKey(x => x.Id);
-            e.Property(x => x.Title).IsRequired();
-            e.Property(x => x.Weights).HasConversion(
-                v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
-                v => System.Text.Json.JsonSerializer.Deserialize<EvalWeights>(v, (System.Text.Json.JsonSerializerOptions?)null) ?? new());
-            e.Ignore(x => x.IsPreset);
-        });
-
-        m.Entity<EvalReportEntity>(e =>
-        {
-            e.ToTable("eval_reports");
-            e.HasKey(x => x.TaskId);
-        });
-
-        m.Entity<EvalCaseResultEntity>(e =>
-        {
-            e.ToTable("eval_case_results");
-            e.HasKey(x => x.Id);
-        });
+        m.Entity<Customer>(e => { e.ToTable("customers"); e.HasKey(x => x.Id); e.Property(x => x.Name).IsRequired(); e.Property(x => x.Level).HasDefaultValue("普通"); });
+        m.Entity<FollowUp>(e => { e.ToTable("followups"); e.HasKey(x => x.Id); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
+        m.Entity<Ticket>(e => { e.ToTable("tickets"); e.HasKey(x => x.Id); e.Property(x => x.Status).HasConversion<string>().HasDefaultValue("未处理"); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
+        m.Entity<ApprovalRequest>(e => { e.ToTable("approval_requests"); e.HasKey(x => x.Id); e.Property(x => x.Status).HasConversion<string>().HasDefaultValue("pending"); });
+        m.Entity<AuditLog>(e => { e.ToTable("audit_logs"); e.HasKey(x => x.Id); e.Property(x => x.Type).HasConversion<string>(); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
+        m.Entity<User>(e => { e.ToTable("users"); e.HasKey(x => x.Username); e.Property(x => x.Role).HasConversion<string>().HasDefaultValue("User"); });
+        m.Entity<KnowledgeBase>(e => { e.ToTable("knowledge_bases"); e.HasKey(x => x.Id); e.Property(x => x.Name).IsRequired(); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); e.Ignore(x => x.DocumentCount); e.Ignore(x => x.ChunkCount); });
+        m.Entity<KnowledgeDocument>(e => { e.ToTable("knowledge_documents"); e.HasKey(x => x.Id); e.Property(x => x.Status).HasConversion<string>(); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
+        m.Entity<DocumentChunk>(e => { e.ToTable("document_chunks"); e.HasKey(x => x.Id); e.Property(x => x.Embedding).HasConversion(v => JsonSerializer.Serialize(v, jo), v => JsonSerializer.Deserialize<List<float>>(v, jo) ?? new()); e.Property(x => x.PageNumber).HasDefaultValue(1); });
+        m.Entity<MemoryRecord>(e => { e.ToTable("memory_records"); e.HasKey(x => x.Id); e.Property(x => x.Type).HasConversion<string>(); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
+        m.Entity<EvalTestCase>(e => { e.ToTable("eval_testcases"); e.HasKey(x => x.Id); e.Property(x => x.Weights).HasConversion(v => JsonSerializer.Serialize(v, jo), v => JsonSerializer.Deserialize<EvalWeights>(v, jo) ?? new()); e.Ignore(x => x.IsPreset); });
+        m.Entity<EvalReportEntity>(e => { e.ToTable("eval_reports"); e.HasKey(x => x.TaskId); });
+        m.Entity<EvalCaseResultEntity>(e => { e.ToTable("eval_case_results"); e.HasKey(x => x.Id); });
     }
 }
 
-/// <summary>EF 映射用的评测报告实体</summary>
 public class EvalReportEntity
 {
     public string TaskId { get; set; } = "";
@@ -112,7 +64,6 @@ public class EvalReportEntity
     public DateTime? CompletedAt { get; set; }
 }
 
-/// <summary>EF 映射用的评测单条结果实体</summary>
 public class EvalCaseResultEntity
 {
     public int Id { get; set; }

@@ -86,9 +86,10 @@ public class DocumentChunk
     public int DatabaseId { get; set; }
     public string Content { get; set; } = "";
     public int PageNumber { get; set; }
-    /// <summary>分片在该文档内的索引（0-based）</summary>
     public int ChunkIndex { get; set; }
     public int TokenCount { get; set; }
+    /// <summary>嵌入向量（JSON序列化存储，EF Core ValueConverter自动转换）</summary>
+    public List<float>? Embedding { get; set; }
 }
 
 // ===================== 检索结果与响应 =====================
