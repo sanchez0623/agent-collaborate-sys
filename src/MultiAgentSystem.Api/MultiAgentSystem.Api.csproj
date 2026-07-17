@@ -15,7 +15,9 @@
     <PackageReference Include="Microsoft.Agents.AI" Version="1.13.0" />
     <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.13.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0-preview.6.26359.118" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <PackageReference Include="Qdrant.Client" Version="1.14.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.0.0" />
     <!-- MVP-4：JWT 鉴权（System.IdentityModel.Tokens.Jwt + Microsoft.IdentityModel.Tokens） -->

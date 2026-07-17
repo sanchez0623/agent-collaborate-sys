@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 ﻿// ============================================================
 // MultiAgentSystem.Api - MVP-4 启动入口
 // 架构：分层 + 策略模式 + 适配器模式 + 人审协调
@@ -82,12 +83,19 @@ builder.Services.AddSingleton<IChatClient>(sp =>
     return new ResilientChatClient(raw, maxRetries: 3, logger);
 });
 
-// ========== 3. 数据库工厂（配置驱动：appsettings.json → Database:Provider） ==========
+// ========== 3. EF Core DbContext（配置驱动：appsettings.json → Database:Provider） ==========
 var dbCfg = builder.Configuration.GetSection("Database").Get<MultiAgentSystem.Api.Data.DatabaseConfig>() ?? new();
+builder.Services.AddDbContext<MultiAgentSystem.Api.Data.MultiAgentDbContext>(options =>
+{
+    if (dbCfg.Provider == "pgsql")
+        options.UseNpgsql(dbCfg.ConnectionString);
+    else
+        options.UseSqlite($"Data Source=multiagent.db");
+});
+
+// 保留裸 SQL 工厂给 BusinessStore / KnowledgeStore（后续逐步迁移到 EF Core）
 builder.Services.AddSingleton<MultiAgentSystem.Api.Data.IDbConnectionFactory>(_ =>
-    dbCfg.Provider == "pgsql"
-        ? new MultiAgentSystem.Api.Data.NpgsqlConnectionFactory(dbCfg.ConnectionString)
-        : new MultiAgentSystem.Api.Data.SqliteConnectionFactory("multiagent.db"));
+    new MultiAgentSystem.Api.Data.SqliteConnectionFactory("multiagent.db"));
 
 // ========== 4. 业务存储 ==========
 builder.Services.AddSingleton<BusinessStore>();
