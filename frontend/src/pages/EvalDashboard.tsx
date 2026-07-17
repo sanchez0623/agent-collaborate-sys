@@ -240,11 +240,12 @@ export default function EvalDashboard() {
             </Col>
             <Col xs={24} lg={12}>
               <Card className="!bg-dark-800 !border-gray-700" title={<span className="text-white">A/B 模式对比</span>}>
-                {report.comparison?.summary && (
-                  <Typography.Paragraph className="!text-gray-300 !mb-3" ellipsis={{ rows: 2 }}>
-                    {report.comparison.summary}
+                {report.comparison?.modeComparisons && report.comparison.modeComparisons.length > 0 && (() => {
+                  const best = report.comparison!.modeComparisons.reduce((a, b) => a.weightedTotal > b.weightedTotal ? a : b)
+                  return <Typography.Paragraph className="!text-gray-300 !mb-3">
+                    最优模式：<Tag color="green">{best.mode}</Tag> 综合得分 {best.weightedTotal} 分
                   </Typography.Paragraph>
-                )}
+                })()}
                 <Table
                   size="small"
                   pagination={false}
