@@ -1,24 +1,21 @@
 # ============================================================
-# MultiAgentSystem - 单容器部署
-# 前提：先在本地构建前端 → cd frontend && npm run build
-# 后端使用 MCR 镜像（国内可访问），无需 Docker Hub
+# MultiAgentSystem.Api - Docker 多阶段构建
+# .NET 11 Preview (nightly), 端口 5000
 # ============================================================
 
-# ---------- Stage 1: 编译后端 ----------
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# ---------- Stage 1: 编译 ----------
+FROM dotnet/nightly/sdk:11.0-preview AS build
 WORKDIR /src
 COPY src/MultiAgentSystem.Api/*.csproj .
-RUN dotnet restore -p:TargetFramework=net10.0
+RUN dotnet restore
 COPY src/MultiAgentSystem.Api/ .
-RUN dotnet publish -c Release -p:TargetFramework=net10.0 -o /app
+RUN dotnet publish -c Release -o /app
 
 # ---------- Stage 2: 运行 ----------
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM dotnet/nightly/aspnet:11.0-preview
 WORKDIR /app
-RUN mkdir -p /app/data /app/wwwroot
-
+RUN mkdir -p /app/data
 COPY --from=build /app .
-COPY frontend/dist ./wwwroot
 
 ENV ASPNETCORE_URLS=http://+:5000
 ENV DB_PATH=/app/data/multiagent.db

@@ -1,9 +1,9 @@
 services:
-  app:
+  backend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: multiagent
+    container_name: multiagent-api
     ports:
       - "5000:5000"
     volumes:
@@ -12,6 +12,19 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:5000
       - DB_PATH=/app/data/multiagent.db
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    container_name: multiagent-web
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE=http://backend:5000
+    depends_on:
+      - backend
     restart: unless-stopped
 
 volumes:
