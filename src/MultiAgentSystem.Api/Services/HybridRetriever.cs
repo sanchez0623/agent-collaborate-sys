@@ -38,6 +38,7 @@ public class HybridRetriever
     private readonly EmbeddingService _embeddings;
     private readonly IVectorStore _vectorStore;
     private readonly KnowledgeStore _store;
+    private readonly ILogger<HybridRetriever> _logger;
 
     /// <summary>RRF 融合常数 k（越大越平滑，越小越偏向 Top）</summary>
     private const int RrfK = 60;
@@ -45,11 +46,12 @@ public class HybridRetriever
     /// <summary>同时嵌入文档的并发上限（批量上传 50 个时最多 3 个并行，避免嵌入 API 被 429 限流）</summary>
     private static readonly SemaphoreSlim _ingestLimiter = new(3, 3);
 
-    public HybridRetriever(EmbeddingService embeddings, IVectorStore vectorStore, KnowledgeStore store)
+    public HybridRetriever(EmbeddingService embeddings, IVectorStore vectorStore, KnowledgeStore store, ILogger<HybridRetriever> logger)
     {
         _embeddings = embeddings;
         _vectorStore = vectorStore;
         _store = store;
+        _logger = logger;
     }
 
     /// <summary>
@@ -148,6 +150,14 @@ public class HybridRetriever
             .Take(topK)
             .Select(kv => kv.Key)
             .ToList();
+
+        _logger.LogInformation(
+            "检索 query=\"{Query}\" dbId={DbId} topK={TopK} | 向量={VecCount}(top1={VecTop1:F3}) 关键词={KwCount} 融合={FusedCount}(top1={FusedTop1:F4}) rerank={Rerank}",
+            query, databaseId, topK,
+            vectorHits.Count, vectorHits.FirstOrDefault().score,
+            keywordHits.Count,
+            fusedScores.Count, topChunkIds.FirstOrDefault() is int first ? fusedScores.GetValueOrDefault(first) : 0,
+            enableRerank);
 
         // 拉取分片详情（含文件名）
         var chunkDetails = new Dictionary<int, (DocumentChunk chunk, string fileName)>();
