@@ -53,8 +53,10 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false)
   const [mode, setMode] = useState<OrchestrationMode>('sequential')
   const [activeMode, setActiveMode] = useState<OrchestrationMode | null>(null)
+  // 按模式隔离 session：每种编排模式维护独立的对话历史
+  const sessionKey = (m: OrchestrationMode) => `session_${m}`
   const [sessionId, setSessionId] = useState<string>(() =>
-    localStorage.getItem('session_id') || crypto.randomUUID()
+    localStorage.getItem(sessionKey('sequential')) || crypto.randomUUID()
   )
   const [events, setEvents] = useState<OrchestrationEventPayload[]>([])
   // 人审：当前待决策的 approval_required 事件
@@ -68,39 +70,50 @@ export default function ChatPage() {
   const mainRef = useRef<HTMLElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  // 页面加载时从后端恢复历史消息
+  // 页面加载时从后端恢复历史消息（当前模式）
   const [historyLoaded, setHistoryLoaded] = useState(false)
-  useEffect(() => {
-    const loadHistory = async () => {
-      try {
-        const token = getToken()
-        const r = await fetch(`/api/chat/sessions/${sessionId}/history`, {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-        })
-        if (!r.ok) return
-        const data: { role: string; content: string }[] = await r.json()
-        if (data.length > 0) {
-          const welcome = {
-            id: 'welcome',
-            role: 'assistant' as const,
-            content: '你好！我是 7 模式编排系统（含 RAG 知识库与 CRM 业务模式）。顶部切换模式，试试问我点什么。RAG 模式会先检索所选知识库再生成回答；CRM 模式可查客户、建客户、删客户（删客户会触发人审）。',
-            agentName: 'System',
-            timestamp: new Date()
-          }
-          const history: Message[] = data.map((h, i) => ({
-            id: `hist-${i}`,
-            role: h.role as 'user' | 'assistant',
-            content: h.content,
-            agentName: undefined,
-            timestamp: new Date(),
-          }))
-          setMessages([welcome, ...history])
+  const loadHistory = async (sid: string) => {
+    try {
+      const token = getToken()
+      const r = await fetch(`/api/chat/sessions/${sid}/history`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      })
+      if (!r.ok) return
+      const data: { role: string; content: string }[] = await r.json()
+      if (data.length > 0) {
+        const welcome = {
+          id: 'welcome', role: 'assistant' as const,
+          content: '你好！我是 7 模式编排系统（含 RAG 知识库与 CRM 业务模式）。顶部切换模式，试试问我点什么。RAG 模式会先检索所选知识库再生成回答；CRM 模式可查客户、建客户、删客户（删客户会触发人审）。',
+          agentName: 'System', timestamp: new Date()
         }
-      } catch { /* 历史加载失败静默忽略 */ }
-      finally { setHistoryLoaded(true) }
-    }
-    loadHistory()
-  }, [])  // 仅挂载时加载一次
+        const history: Message[] = data.map((h, i) => ({
+          id: `hist-${i}`, role: h.role as 'user' | 'assistant',
+          content: h.content, agentName: undefined, timestamp: new Date(),
+        }))
+        setMessages([welcome, ...history])
+      }
+    } catch { /* 历史加载失败静默忽略 */ }
+  }
+
+  // 挂载时恢复当前模式的历史（仅执行一次）
+  useEffect(() => { loadHistory(sessionId); setHistoryLoaded(true) }, [])
+
+  // 切换编排模式：同时切换对应的独立会话
+  const switchMode = (newMode: OrchestrationMode) => {
+    if (loading || newMode === mode) return
+    setMode(newMode)
+    setEvents([])
+    setPendingApproval(null)
+    const stored = localStorage.getItem(sessionKey(newMode))
+    const newSid = stored || crypto.randomUUID()
+    setSessionId(newSid)
+    setMessages([{
+      id: 'welcome', role: 'assistant',
+      content: '你好！我是 7 模式编排系统（含 RAG 知识库与 CRM 业务模式）。顶部切换模式，试试问我点什么。RAG 模式会先检索所选知识库再生成回答；CRM 模式可查客户、建客户、删客户（删客户会触发人审）。',
+      agentName: 'System', timestamp: new Date()
+    }])
+    loadHistory(newSid)
+  }
 
   // 自动滚底：scrollTop 瞬间到位 + requestAnimationFrame 节流，避免 smooth 动画排队
   useEffect(() => {
@@ -108,7 +121,7 @@ export default function ChatPage() {
     if (!el) return
     requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
   }, [messages])
-  useEffect(() => { localStorage.setItem('session_id', sessionId) }, [sessionId])
+  useEffect(() => { localStorage.setItem(sessionKey(mode), sessionId) }, [sessionId, mode])
 
   // 加载知识库列表（用于 RAG 模式选择器）
   useEffect(() => {
@@ -234,9 +247,11 @@ export default function ChatPage() {
     }
   }
 
+  // 新对话：仅清空当前模式的会话
   const newChat = () => {
     const newId = crypto.randomUUID()
     setSessionId(newId)
+    localStorage.removeItem(sessionKey(mode))
     setMessages([{
       id: 'welcome', role: 'assistant',
       content: '新对话开始了。选择编排模式后开始提问。',
@@ -303,7 +318,7 @@ export default function ChatPage() {
           {MODES.map(m => (
             <button
               key={m.key}
-              onClick={() => setMode(m.key)}
+              onClick={() => switchMode(m.key)}
               disabled={loading}
               className={`px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-all
                 ${mode === m.key
