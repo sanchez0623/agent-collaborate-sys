@@ -1,12 +1,9 @@
 **/bin/
 **/obj/
 **/node_modules/
-**/dist/
-**/.vite/
-*.db
-*.db-shm
-*.db-wal
-logs/
 .git/
-.vs/
-.DS_Store
+.gitignore
+*.md
+*.log
+backend.log
+src/MultiAgentSystem.Tests/
