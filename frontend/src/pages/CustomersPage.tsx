@@ -93,6 +93,8 @@ export default function CustomersPage() {
   const [emailGenerating, setEmailGenerating] = useState(false)
   const [emailSending, setEmailSending] = useState(false)
   const [emailTo, setEmailTo] = useState('23837880@qq.com')
+  // 编辑时的表单初始值
+  const [initialValues, setInitialValues] = useState<Record<string, any>>({})
 
   // ============================================================
   // 加载客户列表（带关键字）
@@ -125,16 +127,14 @@ export default function CustomersPage() {
   // ============================================================
   const onNew = () => {
     setEditing(null)
-    form.resetFields()
-    // 默认等级普通、负责人默认当前用户
-    form.setFieldsValue({ level: '普通', owner: getCurrentUser()?.username || '' })
+    setInitialValues({ level: '普通', owner: getCurrentUser()?.username || '' })
     setModalOpen(true)
   }
 
   // 打开编辑 Modal
   const onEdit = (record: Customer) => {
     setEditing(record)
-    form.setFieldsValue({
+    setInitialValues({
       name: record.name,
       company: record.company,
       phone: record.phone,
@@ -390,7 +390,7 @@ export default function CustomersPage() {
         destroyOnClose
         width={520}
       >
-        <Form form={form} layout="vertical" preserve={false}>
+        <Form form={form} layout="vertical" preserve={false} initialValues={initialValues}>
           <Form.Item
             name="name"
             label="姓名"
