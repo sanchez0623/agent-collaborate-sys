@@ -119,28 +119,21 @@ public record RetrievalResponse(
 // ===================== RAG 评测 =====================
 
 /// <summary>
-/// 评测用例 - 输入
+/// 评测总结果 - 召回率/准确率（RAG 简易版，MVP-5 完整版见 EvalModels.cs）
 /// </summary>
-public record EvalTestCase(string Question, string ExpectedAnswer);
+public record RAGResult(
+    int TotalCases,
+    double RecallRate,
+    double AccuracyRate,
+    List<RAGCaseResult> Details);
 
-/// <summary>
-/// 评测单条结果
-/// </summary>
-public record EvalCaseResult(
+/// <summary>RAG 简易评测单条结果</summary>
+public record RAGCaseResult(
     string Question,
     string ExpectedAnswer,
     string ActualAnswer,
     bool Retrieved,
     bool Correct);
-
-/// <summary>
-/// 评测总结果 - 召回率/准确率
-/// </summary>
-public record EvalResult(
-    int TotalCases,
-    double RecallRate,
-    double AccuracyRate,
-    List<EvalCaseResult> Details);
 
 // ===================== 长期记忆与用户画像 =====================
 

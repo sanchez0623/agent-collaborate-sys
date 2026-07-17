@@ -121,7 +121,7 @@ public static class KbEndpoints
         // ---------- RAG 评测 ----------
         app.MapPost("/api/kb/eval", async (EvalTestRequest req, HybridRetriever retriever, IChatClient chatClient) =>
         {
-            var details = new List<EvalCaseResult>();
+            var details = new List<RAGCaseResult>();
             int recalled = 0, correct = 0;
 
             foreach (var tc in req.TestCases)
@@ -144,15 +144,15 @@ public static class KbEndpoints
                 }
                 catch { actualAnswer = "(LLM 调用失败)"; }
 
-                bool isCorrect = !string.IsNullOrEmpty(tc.ExpectedAnswer)
-                    && actualAnswer.Contains(tc.ExpectedAnswer, StringComparison.OrdinalIgnoreCase);
+                bool isCorrect = !string.IsNullOrEmpty(tc.ExpectedKeyPoints)
+                    && actualAnswer.Contains(tc.ExpectedKeyPoints, StringComparison.OrdinalIgnoreCase);
                 if (isCorrect) correct++;
 
-                details.Add(new EvalCaseResult(tc.Question, tc.ExpectedAnswer, actualAnswer, isRetrieved, isCorrect));
+                details.Add(new RAGCaseResult(tc.Question, tc.ExpectedKeyPoints ?? "", actualAnswer, isRetrieved, isCorrect));
             }
 
             var total = req.TestCases.Count;
-            return Results.Ok(new EvalResult(
+            return Results.Ok(new RAGResult(
                 TotalCases: total,
                 RecallRate: total > 0 ? (double)recalled / total : 0,
                 AccuracyRate: total > 0 ? (double)correct / total : 0,
