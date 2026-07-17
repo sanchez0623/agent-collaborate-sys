@@ -241,9 +241,18 @@ export default function EvalDashboard() {
             <Col xs={24} lg={12}>
               <Card className="!bg-dark-800 !border-gray-700" title={<span className="text-white">A/B 模式对比</span>}>
                 {report.comparison?.modeComparisons && report.comparison.modeComparisons.length > 0 && (() => {
-                  const best = report.comparison!.modeComparisons.reduce((a, b) => a.weightedTotal > b.weightedTotal ? a : b)
+                  const modes = report.comparison!.modeComparisons
+                  const best = modes.reduce((a, b) => a.weightedTotal > b.weightedTotal ? a : b)
+                  const others = modes.filter(m => m.mode !== best.mode)
+                  const avgRt = others.length > 0 ? others.reduce((s, m) => s + m.avgResponseMs, 0) / others.length : 0
+                  const reasons: string[] = []
+                  if (best.avgResponseMs < avgRt) reasons.push(`延迟低 ${((1 - best.avgResponseMs / avgRt) * 100).toFixed(0)}%`)
+                  const bestTool = best.avgToolAccuracy; const avgTool = others.reduce((s,m)=>s+m.avgToolAccuracy,0)/(others.length||1)
+                  if (bestTool > avgTool) reasons.push(`工具准确率高 ${((bestTool - avgTool) * 100).toFixed(0)}pp`)
+                  if (others.every(m => best.weightedTotal > m.weightedTotal)) reasons.push('全部维度领先')
                   return <Typography.Paragraph className="!text-gray-300 !mb-3">
                     最优模式：<Tag color="green">{best.mode}</Tag> 综合得分 {best.weightedTotal} 分
+                    {reasons.length > 0 && <span className="text-gray-400 ml-2">——{reasons.join('，')}</span>}
                   </Typography.Paragraph>
                 })()}
                 <Table
