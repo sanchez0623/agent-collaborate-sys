@@ -162,7 +162,9 @@ public enum AuditLogType
     /// <summary>业务数据变更（CRM CRUD）</summary>
     DataChange,
     /// <summary>用户登录</summary>
-    Auth
+    Auth,
+    /// <summary>外部系统集成（邮件/ERP/OA）</summary>
+    Integration
 }
 
 /// <summary>

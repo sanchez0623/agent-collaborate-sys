@@ -122,6 +122,22 @@ public static class CrmEndpoints
         app.MapGet("/api/dashboard", async (BusinessStore store) =>
             Results.Ok(await store.GetStatsAsync())).WithTags("仪表盘");
 
+        // ========== 集成 Demo：跟进邮件 ==========
+        app.MapPost("/api/crm/followups/{id}/generate-email", async (int id, EmailService emailService) =>
+        {
+            var draft = await emailService.GenerateFollowUpEmailAsync(id);
+            if (draft == null) return Results.NotFound(new { error = "跟进记录或客户不存在，或LLM生成失败" });
+            return Results.Ok(draft);
+        }).WithTags("集成Demo");
+
+        app.MapPost("/api/crm/followups/{id}/send-email", async (int id, EmailService emailService) =>
+        {
+            var draft = await emailService.GenerateFollowUpEmailAsync(id);
+            if (draft == null) return Results.NotFound(new { error = "无法生成邮件" });
+            var sent = await emailService.SendEmailAsync(draft);
+            return Results.Ok(new { sent, to = draft.CustomerEmail, subject = draft.Subject });
+        }).WithTags("集成Demo");
+
         return app;
     }
 }

@@ -308,6 +308,30 @@ public class BusinessStore
         });
     }
 
+    public async Task<FollowUp?> GetFollowUpAsync(int id)
+    {
+        return await WithLock(async () =>
+        {
+            using var conn = new SqliteConnection(_connStr);
+            await conn.OpenAsync();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT id,customer_id,method,content,operator,created_at FROM followups WHERE id=@id LIMIT 1;";
+            cmd.Parameters.AddWithValue("@id", id);
+            using var r = await cmd.ExecuteReaderAsync();
+            if (await r.ReadAsync())
+                return new FollowUp
+                {
+                    Id = r.GetInt32(0),
+                    CustomerId = r.GetInt32(1),
+                    Method = r.GetString(2),
+                    Content = r.GetString(3),
+                    Operator = r.GetString(4),
+                    CreatedAt = r.GetDateTime(5)
+                };
+            return null;
+        });
+    }
+
     public async Task<List<FollowUp>> ListFollowUpsAsync(int customerId)
     {
         return await WithLock(async () =>

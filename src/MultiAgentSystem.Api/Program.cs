@@ -109,8 +109,11 @@ builder.Services.AddSingleton<JwtService>(_ => new JwtService(jwtSecret, jwtIssu
 
 // ========== 7. 适配器 + 人审协调器 + CRM 工具 ==========
 builder.Services.AddSingleton<CrmAdapter>();
+builder.Services.AddSingleton<EmailAdapter>();
 builder.Services.AddSingleton<ApprovalCoordinator>();
 builder.Services.AddSingleton<CrmTools>();
+// EmailService：集成 Demo —— CRM 跟进 → 邮件生成 → 发送
+builder.Services.AddSingleton<EmailService>();
 
 // ========== 8a. MVP-3：RAG 知识库 ==========
 // KnowledgeStore 复用 multiagent.db 文件，新增 5 张表

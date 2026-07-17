@@ -31,7 +31,9 @@ public enum ExternalSystemType
     /// <summary>ERP 企业资源计划（预留）</summary>
     ERP,
     /// <summary>OA 办公自动化（预留）</summary>
-    OA
+    OA,
+    /// <summary>邮件系统（集成 Demo：CRM 跟进→邮件生成→人审→发送）</summary>
+    Email
 }
 
 /// <summary>

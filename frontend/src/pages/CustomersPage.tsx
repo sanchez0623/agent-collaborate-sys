@@ -5,12 +5,12 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Table, Button, Input, Modal, Form, Select, Tag, Space,
+  Table, Button, Input, Modal, Form, Select, Tag, Space, Spin,
   Drawer, Descriptions, message, Popconfirm, List, Divider, Typography
 } from 'antd'
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
-  DeleteOutlined, TeamOutlined
+  DeleteOutlined, TeamOutlined, MailOutlined, SendOutlined
 } from '@ant-design/icons'
 import { apiGet, apiPost, apiPut, apiDelete } from '../api'
 import { isAdmin, getCurrentUser } from '../auth'
@@ -38,6 +38,17 @@ export interface FollowUp {
   content: string      // 跟进内容摘要
   operator: string     // 跟进人用户名
   createdAt: string
+}
+
+// 邮件草稿（集成 Demo）
+export interface EmailDraft {
+  subject: string
+  body: string
+  customerId: number
+  customerName: string
+  customerEmail: string
+  followUpId: number
+  generatedAt: string
 }
 
 // ---------- 等级配置：值 + Tag 颜色 ----------
@@ -75,6 +86,12 @@ export default function CustomersPage() {
   const [followupsLoading, setFollowupsLoading] = useState(false)
   const [followSubmitting, setFollowSubmitting] = useState(false)
   const [followForm] = Form.useForm()
+
+  // 邮件生成（集成 Demo）
+  const [emailModalOpen, setEmailModalOpen] = useState(false)
+  const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null)
+  const [emailGenerating, setEmailGenerating] = useState(false)
+  const [emailSending, setEmailSending] = useState(false)
 
   // ============================================================
   // 加载客户列表（带关键字）
@@ -213,6 +230,43 @@ export default function CustomersPage() {
       message.error(`添加跟进失败: ${e.message}`)
     } finally {
       setFollowSubmitting(false)
+    }
+  }
+
+  // ============================================================
+  // 集成 Demo：生成 & 发送跟进邮件
+  // ============================================================
+  const onGenerateEmail = async (followUpId: number) => {
+    setEmailGenerating(true)
+    setEmailModalOpen(true)
+    setEmailDraft(null)
+    try {
+      const draft = await apiPost<EmailDraft>(`/api/crm/followups/${followUpId}/generate-email`, {})
+      setEmailDraft(draft)
+    } catch (e: any) {
+      message.error(`邮件生成失败: ${e.message}`)
+      setEmailModalOpen(false)
+    } finally {
+      setEmailGenerating(false)
+    }
+  }
+
+  const onSendEmail = async () => {
+    if (!emailDraft) return
+    setEmailSending(true)
+    try {
+      const res = await apiPost<any>(`/api/crm/followups/${emailDraft.followUpId}/send-email`, {})
+      if (res.sent) {
+        message.success(`邮件已发送至 ${res.to}`)
+      } else {
+        message.error('邮件发送失败')
+      }
+      setEmailModalOpen(false)
+      setEmailDraft(null)
+    } catch (e: any) {
+      message.error(`发送失败: ${e.message}`)
+    } finally {
+      setEmailSending(false)
     }
   }
 
@@ -449,6 +503,17 @@ export default function CustomersPage() {
                       <div className="text-gray-200 text-sm mt-1 whitespace-pre-wrap">
                         {item.content}
                       </div>
+                      <div className="mt-2">
+                        <Button
+                          size="small"
+                          type="primary"
+                          ghost
+                          icon={<MailOutlined />}
+                          onClick={() => onGenerateEmail(item.id)}
+                        >
+                          生成跟进邮件
+                        </Button>
+                      </div>
                     </div>
                   </List.Item>
                 )}
@@ -489,6 +554,47 @@ export default function CustomersPage() {
           </div>
         )}
       </Drawer>
+
+      {/* 邮件预览 Modal（集成 Demo） */}
+      <Modal
+        title={<span className="text-white"><MailOutlined className="mr-2" />跟进邮件预览</span>}
+        open={emailModalOpen}
+        onCancel={() => { setEmailModalOpen(false); setEmailDraft(null); }}
+        width={700}
+        footer={[
+          <Button key="cancel" onClick={() => { setEmailModalOpen(false); setEmailDraft(null); }}>
+            取消
+          </Button>,
+          <Button key="send" type="primary" icon={<SendOutlined />}
+            onClick={onSendEmail} loading={emailSending}
+            disabled={!emailDraft}>
+            发送邮件
+          </Button>
+        ]}
+        className="dark-modal"
+      >
+        {emailGenerating ? (
+          <div className="flex items-center justify-center py-12">
+            <Spin tip="AI 正在生成邮件..." />
+          </div>
+        ) : emailDraft ? (
+          <div className="space-y-4">
+            <div>
+              <Typography.Text className="!text-gray-400 text-sm">收件人</Typography.Text>
+              <Input value={emailDraft.customerEmail} readOnly className="!bg-dark-700 !text-white mt-1" />
+            </div>
+            <div>
+              <Typography.Text className="!text-gray-400 text-sm">邮件标题</Typography.Text>
+              <Input value={emailDraft.subject} readOnly className="!bg-dark-700 !text-white mt-1" />
+            </div>
+            <div>
+              <Typography.Text className="!text-gray-400 text-sm">邮件正文</Typography.Text>
+              <Input.TextArea value={emailDraft.body} readOnly rows={12}
+                className="!bg-dark-700 !text-white mt-1" />
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   )
 }
