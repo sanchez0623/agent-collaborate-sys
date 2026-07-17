@@ -169,8 +169,8 @@ public class EvalReportStore
                     TotalCases = r.GetInt32(4),
                     CompletedCases = r.GetInt32(5),
                     FailedCases = r.GetInt32(6),
-                    CreatedAt = r.GetDateTime(9),
-                    CompletedAt = r.IsDBNull(10) ? null : r.GetDateTime(10)
+                    CreatedAt = SafeDate(r, 9),
+                    CompletedAt = r.IsDBNull(10) ? null : SafeDate(r, 10)
                 };
             }
             return null;
@@ -204,8 +204,8 @@ public class EvalReportStore
                     OverallScore = r.GetDouble(7),
                     AvgResponseMs = r.GetInt64(8),
                     TotalTokens = r.GetInt32(9),
-                    CreatedAt = r.GetDateTime(11),
-                    CompletedAt = r.IsDBNull(12) ? null : r.GetDateTime(12)
+                    CreatedAt = SafeDate(r, 11),
+                    CompletedAt = r.IsDBNull(12) ? null : SafeDate(r, 12)
                 });
             }
             return list;
@@ -287,7 +287,7 @@ public class EvalReportStore
                     AgentOutputs = r.GetString(15),
                     ToolCallLog = r.GetString(16),
                     JudgeRawOutput = r.GetString(17),
-                    ExecutedAt = r.GetDateTime(18)
+                    ExecutedAt = SafeDate(r, 18)
                 });
             }
             return list;
@@ -333,5 +333,12 @@ public class EvalReportStore
         await _lock.WaitAsync();
         try { await action(); }
         finally { _lock.Release(); }
+    }
+
+    private static DateTime SafeDate(SqliteDataReader r, int ordinal)
+    {
+        if (r.IsDBNull(ordinal)) return DateTime.MinValue;
+        try { return DateTime.Parse(r.GetString(ordinal)); }
+        catch { return DateTime.MinValue; }
     }
 }
