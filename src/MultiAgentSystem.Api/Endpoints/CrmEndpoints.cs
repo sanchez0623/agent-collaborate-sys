@@ -134,10 +134,15 @@ public static class CrmEndpoints
         {
             var draft = await emailService.GenerateFollowUpEmailAsync(id);
             if (draft == null) return Results.NotFound(new { error = "无法生成邮件" });
-            // 允许前端覆盖收件人（测试用）
-            var body = await req.ReadFromJsonAsync<Dictionary<string, string>>();
-            if (body != null && body.TryGetValue("email", out var customEmail) && !string.IsNullOrWhiteSpace(customEmail))
-                draft.CustomerEmail = customEmail;
+            // 允许前端覆盖收件人
+            using var reader = new System.IO.StreamReader(req.Body);
+            var json = await reader.ReadToEndAsync();
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                var kv = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json);
+                if (kv != null && kv.TryGetValue("email", out var el))
+                    draft.CustomerEmail = el.GetString() ?? draft.CustomerEmail;
+            }
             var sent = await emailService.SendEmailAsync(draft);
             return Results.Ok(new { sent, to = draft.CustomerEmail, subject = draft.Subject });
         }).WithTags("集成Demo");
