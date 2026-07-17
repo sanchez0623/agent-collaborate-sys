@@ -107,6 +107,35 @@ public class TestCaseStore
         });
     }
 
+    public async Task<Dictionary<string, List<string>>> GetCaseSetsAsync()
+    {
+        return await WithLock(async () =>
+        {
+            var sets = new Dictionary<string, List<string>>
+            {
+                ["full"] = new(), ["quick-smoke"] = new(), ["rag"] = new(),
+                ["tool"] = new(), ["crm"] = new()
+            };
+            using var conn = new SqliteConnection(_connStr);
+            await conn.OpenAsync();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT id,title,category,tags FROM eval_testcases ORDER BY id;";
+            using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync())
+            {
+                var title = r.GetString(1);
+                var cat = r.GetString(2);
+                var tags = r.GetString(3);
+                sets["full"].Add(title);
+                if (cat is "RAG") sets["rag"].Add(title);
+                if (cat is "工具调用") sets["tool"].Add(title);
+                if (cat is "CRM" or "人审") sets["crm"].Add(title);
+                if (tags.Contains("快速")) sets["quick-smoke"].Add(title);
+            }
+            return sets;
+        });
+    }
+
     // ---------- 内部 ----------
 
     private async Task<int> InsertInternalAsync(SqliteConnection conn, EvalTestCase tc)

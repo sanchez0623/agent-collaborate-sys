@@ -115,6 +115,13 @@ builder.Services.AddSingleton<CrmTools>();
 // EmailService：集成 Demo —— CRM 跟进 → 邮件生成 → 发送
 builder.Services.AddSingleton<EmailService>();
 
+// ========== 8a. MVP-5：评测体系 ==========
+builder.Services.AddSingleton<TestCaseStore>(_ => new TestCaseStore("multiagent.db"));
+builder.Services.AddSingleton<EvalReportStore>(_ => new EvalReportStore("multiagent.db"));
+builder.Services.AddSingleton<MetricCalculator>();
+builder.Services.AddSingleton<JudgeService>();
+builder.Services.AddSingleton<EvalService>();
+
 // ========== 8a. MVP-3：RAG 知识库 ==========
 // KnowledgeStore 复用 multiagent.db 文件，新增 5 张表
 builder.Services.AddSingleton<KnowledgeStore>(_ => new KnowledgeStore("multiagent.db"));
@@ -201,6 +208,7 @@ app.MapAuthEndpoints();
 app.MapCrmEndpoints();
 app.MapChatEndpoints();
 app.MapKbEndpoints();
+app.MapEvalEndpoints();
 
 // ========== 21. 启动 ==========
 try
