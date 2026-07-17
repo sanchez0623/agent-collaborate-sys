@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  # ========== .NET 11 后端 ==========
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: multiagent-api
+    ports:
+      - "5000:5000"
+    volumes:
+      - multiagent_data:/app/data
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5000
+    restart: unless-stopped
+
+  # ========== React + Vite 前端 ==========
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    container_name: multiagent-web
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE=http://backend:5000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  multiagent_data:

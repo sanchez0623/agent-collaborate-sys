@@ -1,17 +1,12 @@
 // ============================================================
 // CriticAgent - 审核员 Agent
-// 职责：审核 Writer 的输出，决定通过（APPROVE）或退回（REJECT）
-// 这是流水线的第 3 步：撰写回答 → 质量审核
+// 职责：审核 Writer 的输出，决定通过或退回
 //
-// 关键设计：输出固定格式的判定结果，编排服务据此解析是否需要重写
-//   - 第一行必须是 [APPROVE] 或 [REJECT]
-//   - 第二行起为审核意见（REJECT 时供 Writer 改进参考）
-//
-// 退回重写机制：
-//   - 编排服务解析到 REJECT → 把意见反馈给 Writer 重写
-//   - 最多重写 2 轮，仍不通过则强制输出最后一版（避免死循环）
+// 输出方式：优先 function calling（结构化 JSON），降级到文本正则
+// 函数 submit_verdict(approved: bool, feedback: string)
 // ============================================================
 
+using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -19,14 +14,31 @@ namespace MultiAgentSystem.Api.Agents;
 
 public static class CriticAgent
 {
-    /// <summary>Agent 标识名（前端工作流面板据此显示）</summary>
     public const string Name = "Critic";
-
-    /// <summary>审核通过的关键字（编排服务据此判定是否退回）</summary>
     public const string ApproveTag = "[APPROVE]";
-
-    /// <summary>审核退回的关键字（编排服务据此判定是否退回）</summary>
     public const string RejectTag = "[REJECT]";
+
+    /// <summary>Function calling 函数名</summary>
+    public const string VerdictFunctionName = "submit_verdict";
+
+    /// <summary>Verdict 结构化记录</summary>
+    public record VerdictResult(bool Approved, string Feedback);
+
+    /// <summary>
+    /// 定义判决函数 —— agent 会调用此函数输出结构化判定
+    /// </summary>
+    public static AIFunction GetVerdictFunction()
+    {
+        return AIFunctionFactory.Create((bool approved, string feedback) =>
+        {
+            // 占位：实际在策略层解析 FunctionCallContent
+            return $"verdict: approved={approved}, feedback={feedback}";
+        }, new AIFunctionFactoryOptions
+        {
+            Name = VerdictFunctionName,
+            Description = "提交审核判定：通过或退回并附带反馈意见",
+        });
+    }
 
     /// <summary>
     /// 创建审核员 Agent
@@ -35,62 +47,47 @@ public static class CriticAgent
     public static ChatClientAgent Create(IChatClient chatClient)
     {
         var instructions = """
-            你是一名严格的审核员（Critic）。你的任务：
-            评估 Writer 写作的回答是否满足质量要求，并输出判定结果。
+            你是一名严格的审核员（Critic）。评估 Writer 的回答质量并提交判定。
 
-            审核维度：
-            1. 准确性：事实和数据是否与研究员素材一致，有无臆造
-            2. 完整性：是否覆盖了用户问题的关键点，有无遗漏
-            3. 清晰度：表达是否清楚、结构是否合理
-            4. 相关性：是否切题，有无跑题或冗余内容
+            审核维度：准确性、完整性、清晰度、相关性。
+            判定原则：仅严重问题才退回（事实错误、严重遗漏、答非所问）；
+            小瑕疵应通过，避免连续退回导致无法收敛。
 
-            【输出格式要求 - 必须严格遵守】
-            第一行只能是以下二者之一：
-              [APPROVE]   - 当回答整体达标时使用
-              [REJECT]    - 当回答存在明显缺陷需要重写时使用
+            **你必须调用 submit_verdict 函数提交判定结果。**
+            调用示例：
+              submit_verdict(approved=true, feedback="回答准确完整")
+              submit_verdict(approved=false, feedback="1.缺少数据支撑; 2.第二段与素材不一致")
 
-            第二行起为审核意见：
-              - APPROVE：简要说明亮点（1-2 句话）
-              - REJECT：列出具体问题及改进建议（Writer 会据此重写）
-
-            判定原则：
-            - 只有严重问题才 REJECT（事实错误、严重遗漏、答非所问）
-            - 小瑕疵（措辞、排版）应 APPROVE，不必苛求完美
-            - 避免连续 REJECT 导致无法收敛
-
-            示例输出（APPROVE）：
-            [APPROVE]
-            回答准确完整，结构清晰。
-
-            示例输出（REJECT）：
-            [REJECT]
-            1. 第二段的数据与素材不一致，请核对
-            2. 缺少对成本部分的说明，需补充
+            若无法调用函数，退而求其次在首行输出 [APPROVE] 或 [REJECT]，后跟意见。
             """;
 
         return new ChatClientAgent(
             chatClient,
             instructions: instructions,
             name: Name,
-            description: "审核员：审核回答质量，决定通过或退回",
-            tools: null,                // Critic 无工具，专注审核
+            description: "审核员：调用 submit_verdict 函数提交通过/退回判定",
+            tools: [GetVerdictFunction()],
             loggerFactory: null,
             null);
     }
 
     /// <summary>
-    /// 解析 Critic 输出，判断是否通过
-    /// 规则：首行非空内容以 [APPROVE] 开头则通过，否则视为退回
+    /// 解析 Critic 输出：优先 function call JSON，降级到 [APPROVE]/[REJECT] 正则
     /// </summary>
-    /// <param name="criticOutput">Critic Agent 的原始输出</param>
-    /// <param name="feedback">退回时的审核意见（通过时为空）</param>
-    /// <returns>true=通过，false=退回</returns>
     public static bool TryParseVerdict(string criticOutput, out string feedback)
     {
         feedback = "";
         if (string.IsNullOrWhiteSpace(criticOutput)) return false;
 
-        // 取首行非空内容作为判定行
+        // 路径 A：function calling JSON（优先）
+        var json = TryParseJsonVerdict(criticOutput);
+        if (json != null)
+        {
+            feedback = json.Feedback ?? "";
+            return json.Approved;
+        }
+
+        // 路径 B：正则匹配 [APPROVE]/[REJECT]（降级）
         var lines = criticOutput.Split('\n', StringSplitOptions.None);
         var verdictLine = lines.FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim()
                           ?? "";
@@ -98,9 +95,45 @@ public static class CriticAgent
 
         if (!isApproved)
         {
-            // 退回时：去掉判定行，剩余部分作为反馈意见
             feedback = string.Join('\n', lines.Skip(1)).Trim();
         }
         return isApproved;
+    }
+
+    /// <summary>尝试从 JSON 中解析 verdict</summary>
+    private static VerdictResult? TryParseJsonVerdict(string text)
+    {
+        // 查找 FunctionCallContent 或 JSON 中的 submit_verdict
+        foreach (var line in text.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (!trimmed.Contains(VerdictFunctionName) && !trimmed.Contains("approved"))
+                continue;
+            try
+            {
+                var doc = JsonDocument.Parse(trimmed);
+                if (doc.RootElement.TryGetProperty("approved", out var approvedEl))
+                {
+                    var approved = approvedEl.GetBoolean();
+                    var fb = doc.RootElement.TryGetProperty("feedback", out var fbEl)
+                        ? fbEl.GetString() : "";
+                    return new VerdictResult(approved, fb ?? "");
+                }
+                // 也兼容 { "arguments": "{\"approved\":true,...}" } 格式
+                if (doc.RootElement.TryGetProperty("arguments", out var args))
+                {
+                    var inner = JsonDocument.Parse(args.GetString() ?? "{}");
+                    if (inner.RootElement.TryGetProperty("approved", out var ia))
+                    {
+                        var approved = ia.GetBoolean();
+                        var fb = inner.RootElement.TryGetProperty("feedback", out var ifb)
+                            ? ifb.GetString() : "";
+                        return new VerdictResult(approved, fb ?? "");
+                    }
+                }
+            }
+            catch { /* 非 JSON 行，跳过 */ }
+        }
+        return null;
     }
 }

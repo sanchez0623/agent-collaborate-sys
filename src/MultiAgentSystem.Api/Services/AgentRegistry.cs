@@ -3,9 +3,11 @@
 // 作用：集中创建和持有所有 ChatClientAgent，按名称检索
 // 所有编排策略都从这里按需取 Agent，避免各策略重复创建
 //
-// 当前注册的 8 个 Agent：
-//   MVP-1 复用：Researcher / Writer / Critic
-//   MVP-2 新增：Analyst / Coder / Consultant / Support / Coordinator
+// Per-Agent Temperature：
+//   不同 Agent 需要不同温度（创造性 vs 确定性），统一在此配置
+//   - Researcher/Coder/Analyst：0.3（偏确定性，避免幻觉）
+//   - Writer/Consultant：0.7（偏创造性，语言流畅）
+//   - Critic/Approver：0.1（严格判定，偏离即误判）
 // ============================================================
 
 using Microsoft.Agents.AI;
@@ -17,32 +19,55 @@ namespace MultiAgentSystem.Api.Services;
 
 public class AgentRegistry
 {
-    /// <summary>按名称索引的 Agent 字典</summary>
     private readonly Dictionary<string, ChatClientAgent> _agents;
-
-    /// <summary>Tavily 搜索工具（Researcher 用）</summary>
     private readonly TavilySearchTool? _searchTool;
+
+    /// <summary>Per-Agent ChatOptions（温度等参数）</summary>
+    private static readonly Dictionary<string, ChatOptions> AgentOptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Critic"]    = new() { Temperature = 0.1f },  // 严格判定
+        ["Approver"]  = new() { Temperature = 0.1f },
+        ["Researcher"]= new() { Temperature = 0.3f },  // 偏确定性
+        ["Coder"]     = new() { Temperature = 0.3f },
+        ["Analyst"]   = new() { Temperature = 0.3f },
+        ["Writer"]    = new() { Temperature = 0.7f },  // 偏创造性
+        ["Consultant"]= new() { Temperature = 0.7f },
+        ["Support"]   = new() { Temperature = 0.5f },
+        ["Coordinator"] = new() { Temperature = 0.3f },
+        ["CrmAgent"]  = new() { Temperature = 0.3f },
+        ["KnowledgeAgent"] = new() { Temperature = 0.3f },
+    };
+
+    /// <summary>
+    /// 获取指定 Agent 的 ChatOptions（含温度等参数）
+    /// </summary>
+    public static ChatOptions? GetAgentOptions(string agentName)
+        => AgentOptions.TryGetValue(agentName, out var opts) ? opts : null;
 
     public AgentRegistry(IChatClient chatClient, TavilySearchTool? searchTool, CrmTools? crmTools = null, KnowledgeTools? knowledgeTools = null)
     {
         _searchTool = searchTool;
+
+        // 为每个 Agent 创建独立的温度包装器
+        var clientFor = (string name) =>
+        {
+            var temp = AgentOptions.TryGetValue(name, out var opts) ? opts.Temperature ?? 0.7f : 0.7f;
+            return new TemperatureChatClient(chatClient, temp);
+        };
+
         _agents = new(StringComparer.OrdinalIgnoreCase)
         {
-            // MVP-1 复用
-            [ResearcherAgent.Name] = ResearcherAgent.Create(chatClient, searchTool),
-            [WriterAgent.Name] = WriterAgent.Create(chatClient),
-            [CriticAgent.Name] = CriticAgent.Create(chatClient),
-            // MVP-2 新增
-            [AnalystAgent.Name] = AnalystAgent.Create(chatClient),
-            [CoderAgent.Name] = CoderAgent.Create(chatClient),
-            [ConsultantAgent.Name] = ConsultantAgent.Create(chatClient),
-            [SupportAgent.Name] = SupportAgent.Create(chatClient),
-            [CoordinatorAgent.Name] = CoordinatorAgent.Create(chatClient),
-            // MVP-4 新增
-            [CrmAgent.Name] = CrmAgent.Create(chatClient, crmTools!),
-            [ApproverAgent.Name] = ApproverAgent.Create(chatClient),
-            // MVP-3 新增
-            [KnowledgeAgent.Name] = KnowledgeAgent.Create(chatClient, knowledgeTools!),
+            ["Critic"]         = CriticAgent.Create(clientFor("Critic")),
+            ["Researcher"]     = ResearcherAgent.Create(clientFor("Researcher"), searchTool),
+            ["Writer"]         = WriterAgent.Create(clientFor("Writer")),
+            ["Analyst"]        = AnalystAgent.Create(clientFor("Analyst")),
+            ["Coder"]          = CoderAgent.Create(clientFor("Coder")),
+            ["Consultant"]     = ConsultantAgent.Create(clientFor("Consultant")),
+            ["Support"]        = SupportAgent.Create(clientFor("Support")),
+            ["Coordinator"]    = CoordinatorAgent.Create(clientFor("Coordinator")),
+            ["CrmAgent"]       = CrmAgent.Create(clientFor("CrmAgent"), crmTools!),
+            ["Approver"]       = ApproverAgent.Create(clientFor("Approver")),
+            ["KnowledgeAgent"] = KnowledgeAgent.Create(clientFor("KnowledgeAgent"), knowledgeTools!),
         };
     }
 
