@@ -82,9 +82,12 @@ builder.Services.AddSingleton<IChatClient>(sp =>
     return new ResilientChatClient(raw, maxRetries: 3, logger);
 });
 
-// ========== 3. 数据库工厂（IDbConnectionFactory，切 PostgreSQL 换实现即可） ==========
-builder.Services.AddSingleton<MultiAgentSystem.Api.Data.IDbConnectionFactory>(
-    _ => new MultiAgentSystem.Api.Data.SqliteConnectionFactory("multiagent.db"));
+// ========== 3. 数据库工厂（配置驱动：appsettings.json → Database:Provider） ==========
+var dbCfg = builder.Configuration.GetSection("Database").Get<MultiAgentSystem.Api.Data.DatabaseConfig>() ?? new();
+builder.Services.AddSingleton<MultiAgentSystem.Api.Data.IDbConnectionFactory>(_ =>
+    dbCfg.Provider == "pgsql"
+        ? new MultiAgentSystem.Api.Data.NpgsqlConnectionFactory(dbCfg.ConnectionString)
+        : new MultiAgentSystem.Api.Data.SqliteConnectionFactory("multiagent.db"));
 
 // ========== 4. 业务存储 ==========
 builder.Services.AddSingleton<BusinessStore>();

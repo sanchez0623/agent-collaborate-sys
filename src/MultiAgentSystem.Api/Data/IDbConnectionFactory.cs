@@ -11,6 +11,7 @@ namespace MultiAgentSystem.Api.Data;
 public interface IDbConnectionFactory
 {
     DbConnection CreateConnection();
+    ISqlDialect Dialect { get; }
 }
 
 /// <summary>DbCommand 扩展：跨提供商的参数添加</summary>

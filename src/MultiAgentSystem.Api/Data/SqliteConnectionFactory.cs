@@ -22,4 +22,5 @@ public class SqliteConnectionFactory : IDbConnectionFactory
     }
 
     public DbConnection CreateConnection() => new SqliteConnection(_connStr);
+    public ISqlDialect Dialect { get; } = new SqliteDialect();
 }
