@@ -168,10 +168,6 @@ app.UseSwaggerUI(options =>
 
 app.UseCors("AllowFrontend");
 
-// 静态文件 + SPA fallback（Docker 部署时后端 serve 前端）
-app.UseDefaultFiles();
-app.UseStaticFiles();
-
 app.UseRouting();
 app.UseAuthorization();
 
@@ -202,9 +198,6 @@ app.MapAuthEndpoints();
 app.MapCrmEndpoints();
 app.MapChatEndpoints();
 app.MapKbEndpoints();
-
-// SPA fallback：非 API 路径返回 index.html（React Router）
-app.MapFallbackToFile("index.html");
 
 // ========== 21. 启动 ==========
 try
