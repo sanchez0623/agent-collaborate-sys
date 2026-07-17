@@ -22,12 +22,17 @@ namespace MultiAgentSystem.Api.Strategies;
 public class SequentialStrategy : IOrchestrationStrategy
 {
     private readonly AgentRegistry _registry;
+    private readonly ILogger<SequentialStrategy> _logger;
     public OrchestrationMode Mode => OrchestrationMode.Sequential;
 
     /// <summary>最大重写轮次（首次 + 最多 2 轮重写）</summary>
     private const int MaxRewriteRounds = 2;
 
-    public SequentialStrategy(AgentRegistry registry) => _registry = registry;
+    public SequentialStrategy(AgentRegistry registry, ILogger<SequentialStrategy> logger)
+    {
+        _registry = registry;
+        _logger = logger;
+    }
 
     public async Task<string> ExecuteAsync(
         string userMessage,
@@ -71,7 +76,7 @@ public class SequentialStrategy : IOrchestrationStrategy
             var criticInput = BuildCriticInput(userMessage, researchOutput, draft);
             var criticOutput = await AgentRunner.RunAsync(critic, criticInput, ct);
 
-            bool approved = CriticAgent.TryParseVerdict(criticOutput, out var feedback);
+            bool approved = CriticAgent.TryParseVerdict(criticOutput, out var feedback, _logger);
             lastFeedback = feedback;
 
             if (approved)

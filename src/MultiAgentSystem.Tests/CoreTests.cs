@@ -136,7 +136,7 @@ public class CoreTests
     [Fact]
     public void SequentialStrategy_Mode_ReturnsSequential()
     {
-        var strategy = new SequentialStrategy(null!); // registry 对测试无关
+        var strategy = new SequentialStrategy(null!, null!);
         Assert.Equal(OrchestrationMode.Sequential, strategy.Mode);
     }
 

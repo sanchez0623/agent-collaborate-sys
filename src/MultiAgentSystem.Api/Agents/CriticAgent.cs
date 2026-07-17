@@ -9,6 +9,7 @@
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 namespace MultiAgentSystem.Api.Agents;
 
@@ -74,7 +75,7 @@ public static class CriticAgent
     /// <summary>
     /// 解析 Critic 输出：优先 function call JSON，降级到 [APPROVE]/[REJECT] 正则
     /// </summary>
-    public static bool TryParseVerdict(string criticOutput, out string feedback)
+    public static bool TryParseVerdict(string criticOutput, out string feedback, ILogger? logger = null)
     {
         feedback = "";
         if (string.IsNullOrWhiteSpace(criticOutput)) return false;
@@ -84,6 +85,8 @@ public static class CriticAgent
         if (json != null)
         {
             feedback = json.Feedback ?? "";
+            logger?.LogInformation("Critic 判定: 路径=A(function calling) approved={Approved} feedback=\"{Feedback}\"",
+                json.Approved, feedback);
             return json.Approved;
         }
 
@@ -97,6 +100,8 @@ public static class CriticAgent
         {
             feedback = string.Join('\n', lines.Skip(1)).Trim();
         }
+        logger?.LogWarning("Critic 判定: 路径=B(正则降级) approved={Approved} raw第一行=\"{Line}\"",
+            isApproved, verdictLine);
         return isApproved;
     }
 
