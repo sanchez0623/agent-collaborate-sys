@@ -3,6 +3,7 @@
 **/obj/
 **/node_modules/
 **/dist/
+!frontend/dist/
 **/.vite/
 *.db
 *.db-shm
