@@ -180,6 +180,13 @@ builder.Services.AddSingleton<RagStrategy>();
 
 var app = builder.Build();
 
+// 启动时一次性建表（SQLite，16张表）
+using (var scope = app.Services.CreateScope())
+{
+    scope.ServiceProvider.GetRequiredService<MultiAgentSystem.Api.Data.MultiAgentDbContext>()
+        .Database.EnsureCreated();
+}
+
 // ========== 10. 中间件管道 ==========
 app.UseSwagger();
 app.UseSwaggerUI(options =>

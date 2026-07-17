@@ -11,50 +11,58 @@ namespace MultiAgentSystem.Api.Services;
 
 public class TestCaseStore
 {
-    private readonly MultiAgentDbContext _db;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public TestCaseStore(MultiAgentDbContext db)
+    public TestCaseStore(IServiceScopeFactory scopeFactory)
     {
-        _db = db;
-        _db.Database.EnsureCreated();
-        SeedPresetAsync().GetAwaiter().GetResult();
+        _scopeFactory = scopeFactory;
+        using var db = Db();
+        SeedPreset(db);
     }
 
-    private async Task SeedPresetAsync()
+    private MultiAgentDbContext Db() => _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<MultiAgentDbContext>();
+
+    private static void SeedPreset(MultiAgentDbContext db)
     {
-        if (!await _db.EvalTestCases.AnyAsync())
-            _db.EvalTestCases.AddRange(PresetCases);
-        await _db.SaveChangesAsync();
+        if (!db.EvalTestCases.Any())
+            db.EvalTestCases.AddRange(PresetCases);
+        db.SaveChanges();
     }
 
     public async Task<List<EvalTestCase>> GetAllAsync(string? category = null)
-        => string.IsNullOrWhiteSpace(category)
-            ? await _db.EvalTestCases.OrderBy(x => x.Category).ThenBy(x => x.Id).ToListAsync()
-            : await _db.EvalTestCases.Where(x => x.Category == category).OrderBy(x => x.Id).ToListAsync();
+    {
+        using var db = Db();
+        return string.IsNullOrWhiteSpace(category)
+            ? await db.EvalTestCases.OrderBy(x => x.Category).ThenBy(x => x.Id).ToListAsync()
+            : await db.EvalTestCases.Where(x => x.Category == category).OrderBy(x => x.Id).ToListAsync();
+    }
 
     public async Task<EvalTestCase?> GetAsync(int id)
-        => await _db.EvalTestCases.FindAsync(id);
+    { using var db = Db(); return await db.EvalTestCases.FindAsync(id); }
 
     public async Task<int> AddAsync(EvalTestCase tc)
     {
+        using var db = Db();
         tc.IsPreset = false;
-        _db.EvalTestCases.Add(tc);
-        await _db.SaveChangesAsync();
+        db.EvalTestCases.Add(tc);
+        await db.SaveChangesAsync();
         return tc.Id;
     }
 
     public async Task<bool> DeleteAsync(int id)
     {
-        var tc = await _db.EvalTestCases.FindAsync(id);
+        using var db = Db();
+        var tc = await db.EvalTestCases.FindAsync(id);
         if (tc == null || tc.IsPreset) return false;
-        _db.EvalTestCases.Remove(tc);
-        await _db.SaveChangesAsync();
+        db.EvalTestCases.Remove(tc);
+        await db.SaveChangesAsync();
         return true;
     }
 
     public async Task<Dictionary<string, List<string>>> GetCaseSetsAsync()
     {
-        var cases = await _db.EvalTestCases.ToListAsync();
+        using var db = Db();
+        var cases = await db.EvalTestCases.ToListAsync();
         return new Dictionary<string, List<string>>
         {
             ["full"] = cases.Select(c => c.Title).ToList(),

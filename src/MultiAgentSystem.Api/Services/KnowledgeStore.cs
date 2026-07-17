@@ -19,7 +19,7 @@ public class KnowledgeStore
         _scopeFactory = scopeFactory;
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MultiAgentDbContext>();
-        db.Database.EnsureCreated();
+        
     }
 
     // ===== KnowledgeBase =====

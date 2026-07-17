@@ -153,6 +153,9 @@ public class CoreTests
         services.AddDbContext<MultiAgentSystem.Api.Data.MultiAgentDbContext>(opts =>
             opts.UseSqlite($"Data Source={path}"));
         var sp = services.BuildServiceProvider();
+        using (var scope = sp.CreateScope())
+            scope.ServiceProvider.GetRequiredService<MultiAgentSystem.Api.Data.MultiAgentDbContext>()
+                .Database.EnsureCreated();
         return new BusinessStore(sp.GetRequiredService<IServiceScopeFactory>());
     }
 
