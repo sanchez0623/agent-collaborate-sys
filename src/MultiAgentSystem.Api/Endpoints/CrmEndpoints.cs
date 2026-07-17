@@ -43,7 +43,7 @@ public static class CrmEndpoints
         app.MapDelete("/api/crm/customers/{id}", async (int id, HttpContext ctx, BusinessStore store, JwtService jwt) =>
         {
             var (user, role) = jwt.ParseUser(ctx.Request.Headers.Authorization);
-            if (role != "Admin") return Results.Forbid();
+            if (role != "Admin") return Results.Json(new { error = "Forbidden" }, statusCode: 403);
             var ok = await store.DeleteCustomerAsync(id, user);
             return ok ? Results.Ok() : Results.NotFound();
         }).WithTags("CRM客户");
@@ -76,7 +76,7 @@ public static class CrmEndpoints
         app.MapPut("/api/tickets/{id}/status", async (int id, TicketStatus status, HttpContext ctx, BusinessStore store, JwtService jwt) =>
         {
             var (user, role) = jwt.ParseUser(ctx.Request.Headers.Authorization);
-            if (role != "Admin") return Results.Forbid();
+            if (role != "Admin") return Results.Json(new { error = "Forbidden" }, statusCode: 403);
             var ok = await store.UpdateTicketStatusAsync(id, status, user);
             return ok ? Results.Ok() : Results.NotFound();
         }).WithTags("工单");
@@ -94,7 +94,7 @@ public static class CrmEndpoints
         app.MapPost("/api/approvals/decide", async (ApprovalDecisionRequest req, HttpContext ctx, ApprovalCoordinator coord, JwtService jwt) =>
         {
             var (user, role) = jwt.ParseUser(ctx.Request.Headers.Authorization);
-            if (role != "Admin") return Results.Forbid();
+            if (role != "Admin") return Results.Json(new { error = "Forbidden" }, statusCode: 403);
             var status = req.Decision.ToLowerInvariant() switch
             {
                 "approved" => ApprovalStatus.Approved,
@@ -114,7 +114,7 @@ public static class CrmEndpoints
         app.MapGet("/api/audit", async (int? limit, HttpContext ctx, BusinessStore store, JwtService jwt) =>
         {
             var (_, role) = jwt.ParseUser(ctx.Request.Headers.Authorization);
-            if (role != "Admin") return Results.Forbid();
+            if (role != "Admin") return Results.Json(new { error = "Forbidden" }, statusCode: 403);
             return Results.Ok(await store.ListAuditLogsAsync(limit ?? 100));
         }).WithTags("审计");
 
