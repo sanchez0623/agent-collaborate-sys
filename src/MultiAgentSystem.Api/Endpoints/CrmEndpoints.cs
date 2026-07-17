@@ -130,10 +130,14 @@ public static class CrmEndpoints
             return Results.Ok(draft);
         }).WithTags("集成Demo");
 
-        app.MapPost("/api/crm/followups/{id}/send-email", async (int id, EmailService emailService) =>
+        app.MapPost("/api/crm/followups/{id}/send-email", async (int id, HttpRequest req, EmailService emailService) =>
         {
             var draft = await emailService.GenerateFollowUpEmailAsync(id);
             if (draft == null) return Results.NotFound(new { error = "无法生成邮件" });
+            // 允许前端覆盖收件人（测试用）
+            var body = await req.ReadFromJsonAsync<Dictionary<string, string>>();
+            if (body != null && body.TryGetValue("email", out var customEmail) && !string.IsNullOrWhiteSpace(customEmail))
+                draft.CustomerEmail = customEmail;
             var sent = await emailService.SendEmailAsync(draft);
             return Results.Ok(new { sent, to = draft.CustomerEmail, subject = draft.Subject });
         }).WithTags("集成Demo");

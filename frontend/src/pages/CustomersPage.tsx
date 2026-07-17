@@ -92,6 +92,7 @@ export default function CustomersPage() {
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null)
   const [emailGenerating, setEmailGenerating] = useState(false)
   const [emailSending, setEmailSending] = useState(false)
+  const [emailTo, setEmailTo] = useState('23837880@qq.com')
 
   // ============================================================
   // 加载客户列表（带关键字）
@@ -243,6 +244,7 @@ export default function CustomersPage() {
     try {
       const draft = await apiPost<EmailDraft>(`/api/crm/followups/${followUpId}/generate-email`, {})
       setEmailDraft(draft)
+      setEmailTo(draft.customerEmail || '23837880@qq.com')
     } catch (e: any) {
       message.error(`邮件生成失败: ${e.message}`)
       setEmailModalOpen(false)
@@ -255,7 +257,9 @@ export default function CustomersPage() {
     if (!emailDraft) return
     setEmailSending(true)
     try {
-      const res = await apiPost<any>(`/api/crm/followups/${emailDraft.followUpId}/send-email`, {})
+      // 使用编辑后的收件人地址
+      emailDraft.customerEmail = emailTo
+      const res = await apiPost<any>(`/api/crm/followups/${emailDraft.followUpId}/send-email`, { email: emailTo })
       if (res.sent) {
         message.success(`邮件已发送至 ${res.to}`)
       } else {
@@ -581,7 +585,8 @@ export default function CustomersPage() {
           <div className="space-y-4">
             <div>
               <Typography.Text className="!text-gray-400 text-sm">收件人</Typography.Text>
-              <Input value={emailDraft.customerEmail} readOnly className="!bg-dark-700 !text-white mt-1" />
+              <Input value={emailTo} onChange={e => setEmailTo(e.target.value)}
+                className="!bg-dark-700 !text-white mt-1" />
             </div>
             <div>
               <Typography.Text className="!text-gray-400 text-sm">邮件标题</Typography.Text>
