@@ -65,6 +65,7 @@ export default function ChatPage() {
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<number | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   // 页面加载时从后端恢复历史消息
@@ -101,7 +102,12 @@ export default function ChatPage() {
     loadHistory()
   }, [])  // 仅挂载时加载一次
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  // 自动滚底：scrollTop 瞬间到位 + requestAnimationFrame 节流，避免 smooth 动画排队
+  useEffect(() => {
+    const el = mainRef.current
+    if (!el) return
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+  }, [messages])
   useEffect(() => { localStorage.setItem('session_id', sessionId) }, [sessionId])
 
   // 加载知识库列表（用于 RAG 模式选择器）
@@ -353,7 +359,7 @@ export default function ChatPage() {
 
         {/* 右侧聊天区 */}
         <div className="flex-1 flex flex-col">
-          <main className="flex-1 overflow-y-auto px-4 py-6">
+          <main ref={mainRef} className="flex-1 overflow-y-auto px-4 py-6">
             <div className="max-w-3xl mx-auto space-y-4">
               {messages.map(msg => (
                 <div key={msg.id} className={`message-enter flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
