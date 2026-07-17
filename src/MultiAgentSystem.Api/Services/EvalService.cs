@@ -105,16 +105,18 @@ public class EvalService
             else
                 cases = GetCasesBySet(req.CaseSet);
 
+            var ragModes = new List<bool> { req.EnableRag };
+            if (req.DisableRag) ragModes.Add(false);
+
             task.TotalCases = cases.Count;
+
+            _logger.LogInformation("评测开始: taskId={Id} caseSet={Set} cases={Cases} modes={Modes} rag={Rag} abRag={AbRag} concurrency={Conc} timeout={T}s",
+                task.Id, req.CaseSet, cases.Count, string.Join(",", req.Modes), req.EnableRag, req.DisableRag, req.MaxConcurrency, req.TimeoutSeconds);
+
             await _reportStore.UpdateTaskProgressAsync(task.Id, 0, 0);
 
             var allResults = new List<EvalCaseResult>();
             var semaphore = new SemaphoreSlim(req.MaxConcurrency > 0 ? req.MaxConcurrency : 1);
-
-            // A/B: RAG 开关
-            var ragModes = new List<bool> { req.EnableRag };
-            if (req.DisableRag) ragModes.Add(false);
-
             int completed = 0, failed = 0;
 
             foreach (var mode in req.Modes)
@@ -124,6 +126,9 @@ public class EvalService
                 await semaphore.WaitAsync();
                 try
                 {
+                    _logger.LogInformation("评测用例开始: case=#{Id} {Title} mode={Mode} rag={Rag}",
+                        tc.Id, tc.Title, mode, ragOn);
+
                     var result = await ExecuteCaseAsync(tc, mode, ragOn, req.TimeoutSeconds);
                     allResults.Add(result);
 
@@ -135,13 +140,20 @@ public class EvalService
                     await _reportStore.SaveCaseResultAsync(result);
                     await _reportStore.UpdateTaskProgressAsync(task.Id, completed, failed);
 
-                    // SSE 推送进度
+                    _logger.LogInformation("评测用例完成: case=#{Id} success={Ok} score={Score:F1} dims={Dims} ms={Ms} tokens={Tk} err={Err}",
+                        tc.Id, result.Success,
+                        result.Dimensions.Count > 0 ? result.Dimensions.Average(d => d.Score) : 0,
+                        result.Dimensions.Count,
+                        result.ResponseTimeMs, result.TotalTokens,
+                        result.ErrorMessage ?? "-");
+
                     PushProgress(channel, task, completed + failed, cases.Count * req.Modes.Count * ragModes.Count);
                 }
                 finally { semaphore.Release(); }
             }
 
             // 生成 A/B 对比 + 汇总报告
+            _logger.LogInformation("评测全部用例完成,生成A/B对比: totalResults={Count}", allResults.Count);
             var comparison = GenerateComparison(allResults, req.Modes);
             var report = new EvalReport
             {
@@ -155,10 +167,16 @@ public class EvalService
                 CreatedAt = task.CreatedAt, CompletedAt = DateTime.UtcNow
             };
 
+            _logger.LogInformation("保存评测报告: taskId={Id} overall={Score:F1} success={Ok}/{Total} teams={AvgMs}ms tokens={Tk} comparison={Comp}",
+                task.Id, report.OverallScore, completed, allResults.Count,
+                report.AvgResponseMs, report.TotalTokens,
+                comparison.Summary);
+
             await _reportStore.FinalizeTaskAsync(report);
             task.Status = "completed";
             task.CompletedAt = DateTime.UtcNow;
 
+            _logger.LogInformation("评测任务完成: taskId={Id}", task.Id);
             channel.Writer.TryComplete();
         }
         catch (Exception ex)
