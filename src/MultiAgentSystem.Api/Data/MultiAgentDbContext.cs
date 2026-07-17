@@ -33,10 +33,10 @@ public class MultiAgentDbContext : DbContext
 
         m.Entity<Customer>(e => { e.ToTable("customers"); e.HasKey(x => x.Id); e.Property(x => x.Name).IsRequired(); e.Property(x => x.Level).HasDefaultValue("普通"); });
         m.Entity<FollowUp>(e => { e.ToTable("followups"); e.HasKey(x => x.Id); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
-        m.Entity<Ticket>(e => { e.ToTable("tickets"); e.HasKey(x => x.Id); e.Property(x => x.Status).HasConversion<string>().HasDefaultValue("未处理"); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
-        m.Entity<ApprovalRequest>(e => { e.ToTable("approval_requests"); e.HasKey(x => x.Id); e.Property(x => x.Status).HasConversion<string>().HasDefaultValue("pending"); });
+        m.Entity<Ticket>(e => { e.ToTable("tickets"); e.HasKey(x => x.Id); e.Property(x => x.Status).HasConversion<string>().HasDefaultValue(TicketStatus.Pending); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
+        m.Entity<ApprovalRequest>(e => { e.ToTable("approval_requests"); e.HasKey(x => x.Id); e.Property(x => x.Status).HasConversion<string>().HasDefaultValue(ApprovalStatus.Pending); });
         m.Entity<AuditLog>(e => { e.ToTable("audit_logs"); e.HasKey(x => x.Id); e.Property(x => x.Type).HasConversion<string>(); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
-        m.Entity<User>(e => { e.ToTable("users"); e.HasKey(x => x.Username); e.Property(x => x.Role).HasConversion<string>().HasDefaultValue("User"); });
+        m.Entity<User>(e => { e.ToTable("users"); e.HasKey(x => x.Username); e.Property(x => x.Role).HasConversion<string>().HasDefaultValue(UserRole.User); });
         m.Entity<KnowledgeBase>(e => { e.ToTable("knowledge_bases"); e.HasKey(x => x.Id); e.Property(x => x.Name).IsRequired(); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); e.Ignore(x => x.DocumentCount); e.Ignore(x => x.ChunkCount); });
         m.Entity<KnowledgeDocument>(e => { e.ToTable("knowledge_documents"); e.HasKey(x => x.Id); e.Property(x => x.Status).HasConversion<string>(); e.Property(x => x.CreatedAt).HasDefaultValueSql("datetime('now')"); });
         m.Entity<DocumentChunk>(e => { e.ToTable("document_chunks"); e.HasKey(x => x.Id); e.Property(x => x.Embedding).HasConversion(v => JsonSerializer.Serialize(v, jo), v => JsonSerializer.Deserialize<List<float>>(v, jo) ?? new()); e.Property(x => x.PageNumber).HasDefaultValue(1); });
@@ -86,4 +86,11 @@ public class EvalCaseResultEntity
     public string ToolCallLog { get; set; } = "";
     public string JudgeRawOutput { get; set; } = "";
     public DateTime ExecutedAt { get; set; }
+}
+
+/// <summary>配置驱动的数据库选择</summary>
+public class DatabaseConfig
+{
+    public string Provider { get; set; } = "sqlite";
+    public string ConnectionString { get; set; } = "";
 }
