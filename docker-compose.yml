@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ========== .NET 11 后端 ==========
   backend:
