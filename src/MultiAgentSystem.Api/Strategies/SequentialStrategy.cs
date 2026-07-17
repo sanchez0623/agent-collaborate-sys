@@ -22,15 +22,17 @@ namespace MultiAgentSystem.Api.Strategies;
 public class SequentialStrategy : IOrchestrationStrategy
 {
     private readonly AgentRegistry _registry;
+    private readonly IChatClient _chatClient;
     private readonly ILogger<SequentialStrategy> _logger;
     public OrchestrationMode Mode => OrchestrationMode.Sequential;
 
     /// <summary>最大重写轮次（首次 + 最多 2 轮重写）</summary>
     private const int MaxRewriteRounds = 2;
 
-    public SequentialStrategy(AgentRegistry registry, ILogger<SequentialStrategy> logger)
+    public SequentialStrategy(AgentRegistry registry, IChatClient chatClient, ILogger<SequentialStrategy> logger)
     {
         _registry = registry;
+        _chatClient = chatClient;
         _logger = logger;
     }
 
@@ -42,7 +44,6 @@ public class SequentialStrategy : IOrchestrationStrategy
     {
         var researcher = _registry.Get(ResearcherAgent.Name);
         var writer = _registry.Get(WriterAgent.Name);
-        var critic = _registry.Get(CriticAgent.Name);
 
         // ---------- 第 1 步：Researcher 调研 ----------
         onEvent(new OrchestrationEvent(OrchestrationEventType.AgentStarted,
@@ -74,7 +75,7 @@ public class SequentialStrategy : IOrchestrationStrategy
                 Agent: CriticAgent.Name, Status: "running", Round: round));
 
             var criticInput = BuildCriticInput(userMessage, researchOutput, draft);
-            var criticOutput = await AgentRunner.RunAsync(critic, criticInput, ct);
+            var criticOutput = await CriticAgent.EvaluateAsync(_chatClient, criticInput, _logger);
 
             bool approved = CriticAgent.TryParseVerdict(criticOutput, out var feedback, _logger);
             lastFeedback = feedback;

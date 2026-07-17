@@ -2,8 +2,8 @@
 // CriticAgent - 审核员 Agent
 // 职责：审核 Writer 的输出，决定通过或退回
 //
-// 输出方式：优先 function calling（结构化 JSON），降级到文本正则
-// 函数 submit_verdict(approved: bool, feedback: string)
+// 输出方式：优先 function calling → 结构化 JSON，降级 [APPROVE]/[REJECT] 文本
+// 调用链：DirectEvaluateAsync（IChatClient 直连 + ChatOptions.Tools）→ TryParseVerdict
 // ============================================================
 
 using System.Text.Json;
@@ -18,62 +18,96 @@ public static class CriticAgent
     public const string Name = "Critic";
     public const string ApproveTag = "[APPROVE]";
     public const string RejectTag = "[REJECT]";
-
-    /// <summary>Function calling 函数名</summary>
     public const string VerdictFunctionName = "submit_verdict";
 
-    /// <summary>Verdict 结构化记录</summary>
     public record VerdictResult(bool Approved, string Feedback);
 
+    private const string Instructions = """
+        你是一名严格的审核员（Critic）。评估 Writer 的回答质量。
+
+        审核维度：准确性、完整性、清晰度、相关性。
+        判定原则：仅严重问题才退回（事实错误、严重遗漏、答非所问）；
+        小瑕疵应通过，避免连续退回导致无法收敛。
+
+        通过审核则 approved=true，退回则 approved=false 并给出具体反馈。
+        """;
     /// <summary>
-    /// 定义判决函数 —— agent 会调用此函数输出结构化判定
+    /// 创建审核员 Agent（供 AgentRegistry 注册用，返回 ChatClientAgent 以兼容框架）
+    /// 注意：实际审核调用走 EvaluateAsync 直接方法，不经过 ChatClientAgent.RunAsync。
     /// </summary>
-    public static AIFunction GetVerdictFunction()
+    public static ChatClientAgent Create(IChatClient chatClient)
+    {
+        return new ChatClientAgent(chatClient,
+            instructions: Instructions,
+            name: Name,
+            description: "审核员：评估 Writer 输出并给出通过/退回判定",
+            tools: [GetVerdictFunction()]);
+    }
+
+    private static AIFunction GetVerdictFunction()
     {
         return AIFunctionFactory.Create((bool approved, string feedback) =>
-        {
-            // 占位：实际在策略层解析 FunctionCallContent
-            return $"verdict: approved={approved}, feedback={feedback}";
-        }, new AIFunctionFactoryOptions
-        {
-            Name = VerdictFunctionName,
-            Description = "提交审核判定：通过或退回并附带反馈意见",
-        });
+            $"verdict: approved={approved}, feedback={feedback}",
+            new AIFunctionFactoryOptions
+            {
+                Name = VerdictFunctionName,
+                Description = "提交审核判定：通过或退回并附带反馈意见"
+            });
     }
 
     /// <summary>
-    /// 创建审核员 Agent
+    /// 直接调用 IChatClient.GetResponseAsync + ChatOptions.Tools
+    /// 绕过 ChatClientAgent 框架层，确保 tools 被正确传递给 DeepSeek API。
     /// </summary>
-    /// <param name="chatClient">共享的 IChatClient（连接 DeepSeek）</param>
-    public static ChatClientAgent Create(IChatClient chatClient)
+    public static async Task<string> EvaluateAsync(IChatClient chatClient, string input, ILogger? logger = null)
     {
-        var instructions = """
-            你是一名严格的审核员（Critic）。评估 Writer 的回答质量。
+        var tool = GetVerdictFunction();
+        var options = new ChatOptions { Tools = [tool] };
+        var messages = new List<ChatMessage>
+        {
+            new(ChatRole.System, Instructions),
+            new(ChatRole.User, input)
+        };
 
-            审核维度：准确性、完整性、清晰度、相关性。
-            判定原则：仅严重问题才退回（事实错误、严重遗漏、答非所问）；
-            小瑕疵应通过，避免连续退回导致无法收敛。
+        logger?.LogDebug("Critic 发送 tool_calls 请求: tool={ToolName}", VerdictFunctionName);
 
-            **输出格式（必须严格遵守，不可输出其他内容）：**
-            通过：输出 [APPROVE]
-            退回：输出 [REJECT]
-            反馈写在标签后面同一行。
+        try
+        {
+            var response = await chatClient.GetResponseAsync(messages, options, CancellationToken.None);
+            var output = ExtractResponse(response);
+            logger?.LogDebug("Critic 原始输出: {Output}", output.Truncate(500));
+            return output;
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "Critic tool_calls 调用失败，回退到纯文本模式");
+            // 回退：不带 tools 重新调用
+            var textResponse = await chatClient.GetResponseAsync(messages, cancellationToken: CancellationToken.None);
+            return ExtractResponse(textResponse);
+        }
+    }
 
-            示例：
-            [APPROVE] 回答准确完整，符合要求
-            [REJECT] 1.缺少数据支撑 2.第二段与素材不一致
-
-            你的回复第一行必须是 [APPROVE] 或 [REJECT]，不能有任何其他内容在标签前面。
-            """;
-
-        return new ChatClientAgent(
-            chatClient,
-            instructions: instructions,
-            name: Name,
-            description: "审核员：调用 submit_verdict 函数提交通过/退回判定",
-            tools: [GetVerdictFunction()],
-            loggerFactory: null,
-            null);
+    /// <summary>从 ChatResponse 提取完整文本内容</summary>
+    private static string ExtractResponse(ChatResponse response)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var msg in response.Messages)
+        {
+            foreach (var content in msg.Contents)
+            {
+                switch (content)
+                {
+                    case TextContent tc:
+                        sb.AppendLine(tc.Text);
+                        break;
+                    case FunctionCallContent fc:
+                        var argsJson = JsonSerializer.Serialize(fc.Arguments);
+                        sb.AppendLine($"{{\"name\":\"{fc.Name}\",\"arguments\":{argsJson}}}");
+                        break;
+                }
+            }
+        }
+        return sb.ToString().Trim();
     }
 
     /// <summary>
@@ -96,14 +130,10 @@ public static class CriticAgent
 
         // 路径 B：正则匹配 [APPROVE]/[REJECT]（降级）
         var lines = criticOutput.Split('\n', StringSplitOptions.None);
-        var verdictLine = lines.FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim()
-                          ?? "";
+        var verdictLine = lines.FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim() ?? "";
         var isApproved = verdictLine.StartsWith(ApproveTag, StringComparison.OrdinalIgnoreCase);
+        if (!isApproved) feedback = string.Join('\n', lines.Skip(1)).Trim();
 
-        if (!isApproved)
-        {
-            feedback = string.Join('\n', lines.Skip(1)).Trim();
-        }
         logger?.LogWarning("Critic 判定: 路径=B(正则降级) approved={Approved} raw第一行=\"{Line}\"",
             isApproved, verdictLine);
         return isApproved;
@@ -112,37 +142,36 @@ public static class CriticAgent
     /// <summary>尝试从 JSON 中解析 verdict</summary>
     private static VerdictResult? TryParseJsonVerdict(string text)
     {
-        // 查找 FunctionCallContent 或 JSON 中的 submit_verdict
         foreach (var line in text.Split('\n'))
         {
             var trimmed = line.Trim();
-            if (!trimmed.Contains(VerdictFunctionName) && !trimmed.Contains("approved"))
-                continue;
+            if (!trimmed.Contains(VerdictFunctionName) && !trimmed.Contains("approved")) continue;
             try
             {
                 var doc = JsonDocument.Parse(trimmed);
                 if (doc.RootElement.TryGetProperty("approved", out var approvedEl))
                 {
-                    var approved = approvedEl.GetBoolean();
-                    var fb = doc.RootElement.TryGetProperty("feedback", out var fbEl)
-                        ? fbEl.GetString() : "";
-                    return new VerdictResult(approved, fb ?? "");
+                    return new VerdictResult(
+                        approvedEl.GetBoolean(),
+                        doc.RootElement.TryGetProperty("feedback", out var fb) ? fb.GetString() ?? "" : "");
                 }
-                // 也兼容 { "arguments": "{\"approved\":true,...}" } 格式
                 if (doc.RootElement.TryGetProperty("arguments", out var args))
                 {
                     var inner = JsonDocument.Parse(args.GetString() ?? "{}");
                     if (inner.RootElement.TryGetProperty("approved", out var ia))
-                    {
-                        var approved = ia.GetBoolean();
-                        var fb = inner.RootElement.TryGetProperty("feedback", out var ifb)
-                            ? ifb.GetString() : "";
-                        return new VerdictResult(approved, fb ?? "");
-                    }
+                        return new VerdictResult(ia.GetBoolean(),
+                            inner.RootElement.TryGetProperty("feedback", out var ifb) ? ifb.GetString() ?? "" : "");
                 }
             }
-            catch { /* 非 JSON 行，跳过 */ }
+            catch { }
         }
         return null;
     }
+}
+
+/// <summary>字符串截断扩展</summary>
+file static class StringExtensions
+{
+    public static string Truncate(this string value, int maxLength)
+        => value.Length <= maxLength ? value : value[..maxLength] + "...";
 }
