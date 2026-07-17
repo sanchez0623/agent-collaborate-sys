@@ -155,12 +155,22 @@ public static class CriticAgent
                         approvedEl.GetBoolean(),
                         doc.RootElement.TryGetProperty("feedback", out var fb) ? fb.GetString() ?? "" : "");
                 }
+                // 兼容 arguments 为 JSON 字符串 或 JSON 对象两种格式
                 if (doc.RootElement.TryGetProperty("arguments", out var args))
                 {
-                    var inner = JsonDocument.Parse(args.GetString() ?? "{}");
-                    if (inner.RootElement.TryGetProperty("approved", out var ia))
-                        return new VerdictResult(ia.GetBoolean(),
-                            inner.RootElement.TryGetProperty("feedback", out var ifb) ? ifb.GetString() ?? "" : "");
+                    if (args.ValueKind == JsonValueKind.String)
+                    {
+                        var inner = JsonDocument.Parse(args.GetString() ?? "{}");
+                        if (inner.RootElement.TryGetProperty("approved", out var ia))
+                            return new VerdictResult(ia.GetBoolean(),
+                                inner.RootElement.TryGetProperty("feedback", out var ifb) ? ifb.GetString() ?? "" : "");
+                    }
+                    else if (args.ValueKind == JsonValueKind.Object
+                             && args.TryGetProperty("approved", out var da))
+                    {
+                        return new VerdictResult(da.GetBoolean(),
+                            args.TryGetProperty("feedback", out var fb2) ? fb2.GetString() ?? "" : "");
+                    }
                 }
             }
             catch { }
