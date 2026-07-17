@@ -305,6 +305,17 @@ public class EvalReportStore
         var allDims = caseResults.SelectMany(r => r.Dimensions).ToList();
         double overall = allDims.Count > 0 ? allDims.Average(d => d.Score) : 0;
 
+        // 读取 A/B 对比数据
+        ABComparison? comparison = null;
+        using var connCmp = _db.CreateConnection();
+        await connCmp.OpenAsync();
+        using var cmdCmp = connCmp.CreateCommand();
+        cmdCmp.CommandText = "SELECT comparison_json FROM eval_reports WHERE task_id=@id;";
+        cmdCmp.AddParam("@id", taskId);
+        var jsonStr = await cmdCmp.ExecuteScalarAsync() as string;
+        if (!string.IsNullOrWhiteSpace(jsonStr))
+            try { comparison = JsonSerializer.Deserialize<ABComparison>(jsonStr); } catch { }
+
         return new EvalReport
         {
             TaskId = task.Id,
@@ -318,6 +329,7 @@ public class EvalReportStore
             AvgResponseMs = avgMs,
             TotalTokens = caseResults.Sum(r => r.TotalTokens),
             CaseResults = caseResults,
+            Comparison = comparison,
             CreatedAt = task.CreatedAt,
             CompletedAt = task.CompletedAt
         };

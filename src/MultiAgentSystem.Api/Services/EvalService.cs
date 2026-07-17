@@ -131,6 +131,7 @@ public class EvalService
                     task.CompletedCases = completed;
                     task.FailedCases = failed;
 
+                    result.TaskId = task.Id;
                     await _reportStore.SaveCaseResultAsync(result);
                     await _reportStore.UpdateTaskProgressAsync(task.Id, completed, failed);
 
