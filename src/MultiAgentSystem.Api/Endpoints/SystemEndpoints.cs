@@ -25,6 +25,13 @@ public static class SystemEndpoints
             return Results.Ok(new { TotalChunks = count, Message = $"当前共 {count} 个分片" });
         }).WithTags("系统");
 
+        // 清空所有历史对话（旧数据混杂 7 种模式，无法区分）
+        app.MapDelete("/api/system/conversations", async (ConversationStore store) =>
+        {
+            await store.DeleteAllAsync();
+            return Results.Ok(new { cleared = true, message = "所有历史对话已清空" });
+        }).WithTags("系统");
+
         return app;
     }
 }

@@ -164,4 +164,24 @@ public class ConversationStore
         }
         finally { _lock.Release(); }
     }
+
+    /// <summary>
+    /// 清空所有历史对话（conversations + messages 级联删除）
+    /// </summary>
+    public async Task DeleteAllAsync()
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            await conn.OpenAsync();
+            using var cmd = conn.CreateCommand();
+            // 先删消息（FK 约束不一定开启），再删会话
+            cmd.CommandText = "DELETE FROM messages;";
+            await cmd.ExecuteNonQueryAsync();
+            cmd.CommandText = "DELETE FROM conversations;";
+            await cmd.ExecuteNonQueryAsync();
+        }
+        finally { _lock.Release(); }
+    }
 }
