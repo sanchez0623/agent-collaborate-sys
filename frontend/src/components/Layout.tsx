@@ -7,7 +7,7 @@ import { Layout, Menu, Avatar, Dropdown, Tag, Space } from 'antd'
 import {
   MessageOutlined, TeamOutlined, SolutionOutlined,
   AuditOutlined, DashboardOutlined, LogoutOutlined, RobotOutlined, UserOutlined,
-  BookOutlined, SearchOutlined, ExperimentOutlined
+  BookOutlined, SearchOutlined, ExperimentOutlined, BarChartOutlined
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { getCurrentUser, logout, isAdmin } from '../auth'
@@ -26,6 +26,7 @@ export default function AppLayout() {
     { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
     { key: '/retrieval-test', icon: <SearchOutlined />, label: '检索测试' },
     { key: '/rag-eval', icon: <ExperimentOutlined />, label: 'RAG评测' },
+    { key: '/eval-dashboard', icon: <BarChartOutlined />, label: '评测仪表盘' },
     { key: '/customers', icon: <TeamOutlined />, label: '客户管理' },
     { key: '/tickets', icon: <SolutionOutlined />, label: '工单看板' },
     ...(isAdmin()

@@ -13,6 +13,7 @@ import DashboardPage from './pages/DashboardPage'
 import KnowledgePage from './pages/KnowledgePage'
 import RetrievalTestPage from './pages/RetrievalTestPage'
 import RagEvalPage from './pages/RagEvalPage'
+import EvalDashboard from './pages/EvalDashboard'
 import { isLoggedIn } from './auth'
 import './index.css'
 
@@ -42,6 +43,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/knowledge" element={<KnowledgePage />} />
             <Route path="/retrieval-test" element={<RetrievalTestPage />} />
             <Route path="/rag-eval" element={<RagEvalPage />} />
+            <Route path="/eval-dashboard" element={<EvalDashboard />} />
             <Route path="/customers" element={<CustomersPage />} />
             <Route path="/tickets" element={<TicketsPage />} />
             <Route path="/approvals" element={<ApprovalsPage />} />
