@@ -12,6 +12,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons'
 import { apiGet } from '../api'
+import { isAdmin } from '../auth'
 
 // 仪表盘统计数据结构（对应 GET /api/dashboard 返回）
 interface DashboardStats {
@@ -52,7 +53,7 @@ export default function DashboardPage() {
     try {
       const [s, l] = await Promise.all([
         apiGet<DashboardStats>('/api/dashboard'),
-        apiGet<AuditLog[]>('/api/audit?limit=20'),
+        isAdmin() ? apiGet<AuditLog[]>('/api/audit?limit=20') : Promise.resolve([]),
       ])
       setStats(s)
       setLogs(l)
