@@ -27,6 +27,7 @@ public class BusinessStore
 
     public BusinessStore(string dbPath = "multiagent.db")
     {
+        dbPath = Environment.GetEnvironmentVariable("DB_PATH") ?? dbPath;
         _connStr = $"Data Source={dbPath}";
         EnsureCreated();
         SeedData();

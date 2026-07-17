@@ -28,6 +28,7 @@ public class KnowledgeStore
 
     public KnowledgeStore(string dbPath = "multiagent.db")
     {
+        dbPath = Environment.GetEnvironmentVariable("DB_PATH") ?? dbPath;
         _connStr = $"Data Source={dbPath}";
         EnsureCreated();
     }

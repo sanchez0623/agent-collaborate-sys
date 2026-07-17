@@ -22,6 +22,7 @@ public class ConversationStore
 
     public ConversationStore(string dbPath = "multiagent.db")
     {
+        dbPath = Environment.GetEnvironmentVariable("DB_PATH") ?? dbPath;
         // 数据源=文件路径；Pooling=false 避免多连接写冲突
         _connectionString = $"Data Source={dbPath}";
         // 启动时自动建表
