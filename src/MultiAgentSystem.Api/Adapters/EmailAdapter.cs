@@ -52,7 +52,8 @@ public class EmailAdapter : IExternalSystemAdapter
     {
         try
         {
-            var email = JsonSerializer.Deserialize<EmailPayload>(parametersJson);
+            var email = JsonSerializer.Deserialize<EmailPayload>(parametersJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             if (email == null || string.IsNullOrWhiteSpace(email.To))
                 return new ExternalOperationResult(false, "", "邮件参数不完整：缺少收件人");
 
