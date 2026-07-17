@@ -89,7 +89,14 @@ public class EvalService
         {
             var cases = req.CaseSet == "all" || req.CaseSet == "full"
                 ? await _caseStore.GetAllAsync()
-                : GetCasesBySet(req.CaseSet);
+                : await GetCasesBySetAsync(req.CaseSet);
+
+            if (cases.Count == 0)
+            {
+                _logger.LogWarning("评测无可用用例: caseSet={Set}", req.CaseSet);
+                channel.Writer.TryComplete();
+                return;
+            }
 
             var ragModes = new List<bool> { req.EnableRag };
             if (req.DisableRag) ragModes.Add(false);
@@ -200,11 +207,17 @@ public class EvalService
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSec));
 
+            _logger.LogDebug("策略开始执行: case=#{Id} mode={Mode} strategy={Strategy}",
+                tc.Id, mode, strategy.GetType().Name);
+
             var finalOutput = await strategy.ExecuteAsync(
                 tc.Question,
                 new List<MultiAgentSystem.Api.Models.ChatMessage>() as IReadOnlyList<MultiAgentSystem.Api.Models.ChatMessage>,
                 e => { lock (capturedEvents) capturedEvents.Add(e); },
                 cts.Token);
+
+            _logger.LogDebug("策略执行完成: case=#{Id} events={Count} outputLen={Len}",
+                tc.Id, capturedEvents.Count, finalOutput.Length);
 
             result.AgentOutputs = finalOutput;
             result.ConversationLog = BuildConversationLog(capturedEvents, tc.Question, finalOutput);
@@ -290,18 +303,21 @@ public class EvalService
 
     // ===== 用例集 =====
 
-    private List<EvalTestCase> GetCasesBySet(string setName)
+    private async Task<List<EvalTestCase>> GetCasesBySetAsync(string setName)
     {
-        // 从 TestCaseStore 的预设中筛选
-        return _caseStore.GetAllAsync().GetAwaiter().GetResult()
-            .Where(tc => setName switch
-            {
-                "quick-smoke" => tc.Tags.Contains("快速"),
-                "rag" => tc.Category == "RAG",
-                "tool" => tc.Category == "工具调用",
-                "crm" => tc.Category is "CRM" or "人审",
-                _ => true
-            }).ToList();
+        var all = await _caseStore.GetAllAsync();
+        var filtered = all.Where(tc => setName switch
+        {
+            "quick-smoke" => tc.Tags.Contains("快速"),
+            "rag" => tc.Category == "RAG",
+            "tool" => tc.Category == "工具调用",
+            "crm" => tc.Category is "CRM" or "人审",
+            _ => true
+        }).ToList();
+
+        _logger.LogInformation("用例筛选: set={Set} total={Total} filtered={Filtered}",
+            setName, all.Count, filtered.Count);
+        return filtered;
     }
 
     // ===== SSE 进度 + 其他工具方法 =====
