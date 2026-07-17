@@ -250,7 +250,7 @@ public class HybridRetriever
     /// <summary>
     /// 简化分词：中文 2-gram + 英文按非字母数字分割
     /// </summary>
-    private static List<string> Tokenize(string text)
+    internal static List<string> Tokenize(string text)
     {
         var tokens = new List<string>();
         if (string.IsNullOrEmpty(text)) return tokens;
@@ -288,7 +288,7 @@ public class HybridRetriever
     }
 
     /// <summary>统计 sub 在 text 中出现的次数（重叠计数）</summary>
-    private static int CountOccurrences(string text, string sub)
+    internal static int CountOccurrences(string text, string sub)
     {
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(sub)) return 0;
         int count = 0, pos = 0;
