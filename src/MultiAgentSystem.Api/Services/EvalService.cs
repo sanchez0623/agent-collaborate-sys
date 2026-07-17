@@ -192,10 +192,12 @@ public class EvalService
         var capturedEvents = new List<OrchestrationEvent>();
 
         IOrchestrationStrategy? strategy = null;
+        string evalSessionId = "";
+        TokenUsage strategyUsage = new();
         try
         {
             strategy = ResolveStrategy(mode, ragOn);
-            var evalSessionId = $"eval_{Guid.NewGuid().ToString("N")[..8]}";
+            evalSessionId = $"eval_{Guid.NewGuid().ToString("N")[..8]}";
             ApprovalCoordinator.CurrentSessionId = evalSessionId;
 
             // 注册人审自动决策（评测场景：第1次拒绝，后续自动同意）
@@ -211,22 +213,28 @@ public class EvalService
             _logger.LogDebug("策略开始执行: case=#{Id} mode={Mode} strategy={Strategy}",
                 tc.Id, mode, strategy.GetType().Name);
 
+            // 启动 token 计数会话（捕获本次用例所有 LLM 调用的 token）
+            TokenCountingChatClient.StartSession(evalSessionId);
+
             var finalOutput = await strategy.ExecuteAsync(
                 tc.Question,
                 new List<MultiAgentSystem.Api.Models.ChatMessage>() as IReadOnlyList<MultiAgentSystem.Api.Models.ChatMessage>,
                 e => { lock (capturedEvents) capturedEvents.Add(e); },
                 cts.Token);
 
-            _logger.LogDebug("策略执行完成: case=#{Id} events={Count} outputLen={Len}",
-                tc.Id, capturedEvents.Count, finalOutput.Length);
+            strategyUsage = TokenCountingChatClient.EndSession(evalSessionId);
+
+            _logger.LogDebug("策略执行完成: case=#{Id} events={Count} outputLen={Len} tokens={In}/{Out}",
+                tc.Id, capturedEvents.Count, finalOutput.Length, strategyUsage.InputTokens, strategyUsage.OutputTokens);
 
             result.AgentOutputs = finalOutput;
             result.ConversationLog = BuildConversationLog(capturedEvents, tc.Question, finalOutput);
 
-            // 提取真实工具调用
+            // 提取真实工具调用（存为 List<string> 工具名，ParseToolList 才能正确解析）
             var toolEvents = capturedEvents.Where(e => e.Type == OrchestrationEventType.ToolCall).ToList();
-            result.ToolCallLog = JsonSerializer.Serialize(toolEvents.Select(t => new { tool = t.ToolName, args = t.ToolArgs, result = t.ToolResult }));
-            result.ActualToolCount = toolEvents.Count;
+            var toolNames = toolEvents.Select(t => t.ToolName ?? "unknown").ToList();
+            result.ToolCallLog = JsonSerializer.Serialize(toolNames);
+            result.ActualToolCount = toolNames.Count;
 
             // 提取审批事件
             var approvalEvents = capturedEvents.Where(e => e.Type is OrchestrationEventType.ApprovalRequired or OrchestrationEventType.ApprovalResult).ToList();
@@ -237,6 +245,7 @@ public class EvalService
             result.ErrorMessage = $"超时 ({timeoutSec}s)";
             result.Dimensions = GetErrorDimensions(result.ErrorMessage);
             result.Success = false;
+            TokenCountingChatClient.EndSession(evalSessionId);  // 清理
             _logger.LogWarning("用例超时: case=#{Id} mode={Mode}", tc.Id, mode);
             return result;
         }
@@ -244,6 +253,7 @@ public class EvalService
         {
             result.ErrorMessage = ex.Message;
             result.Dimensions = GetErrorDimensions(ex.Message);
+            TokenCountingChatClient.EndSession(evalSessionId);  // 清理
             _logger.LogError(ex, "用例执行失败: case=#{Id} mode={Mode} strategy={Strategy}",
                 tc.Id, mode, strategy.GetType().Name);
             return result;
@@ -251,20 +261,29 @@ public class EvalService
         finally { sw.Stop(); }
 
         result.ResponseTimeMs = sw.ElapsedMilliseconds;
+        result.InputTokens = strategyUsage.InputTokens;
+        result.OutputTokens = strategyUsage.OutputTokens;
+        result.TotalTokens = strategyUsage.TotalTokens;
 
         // 自动指标（基于真实数据）
         _metrics.CalculateMetrics(result, tc.ExpectedToolCalls, result.ToolCallLog, result.AgentOutputs, null);
 
         // LLM Judge 评分（基于真实对话记录）
         _logger.LogDebug("用例开始Judge评分: case=#{Id}", tc.Id);
+        TokenCountingChatClient.StartSession($"{evalSessionId}_judge");
         var judgeScores = await _judge.JudgeAsync(tc, tc.Question, result.AgentOutputs, 1);
+        var judgeUsage = TokenCountingChatClient.EndSession($"{evalSessionId}_judge");
+        // 总 token = 策略 + Judge
+        result.InputTokens += judgeUsage.InputTokens;
+        result.OutputTokens += judgeUsage.OutputTokens;
+        result.TotalTokens += judgeUsage.TotalTokens;
         result.JudgeRawOutput = JsonSerializer.Serialize(judgeScores);
         result.Dimensions.AddRange(judgeScores);
         result.Success = true;
 
-        _logger.LogDebug("用例Judge完成: case=#{Id} score={Avg:F1} dims={Count} tools={Actual}/{Expected}",
+        _logger.LogDebug("用例Judge完成: case=#{Id} score={Avg:F1} dims={Count} tools={Actual}/{Expected} totalTokens={Tk}",
             tc.Id, judgeScores.Average(d => d.Score), judgeScores.Count,
-            result.ActualToolCount, tc.ExpectedToolCalls?.Length ?? 0);
+            result.ActualToolCount, tc.ExpectedToolCalls?.Length ?? 0, result.TotalTokens);
 
         return result;
     }
@@ -379,8 +398,9 @@ public class EvalService
         var comparison = new ABComparison { Summary = "" };
         foreach (var mode in modes)
         {
-            var modeResults = allResults.Where(r => r.Mode == mode && r.Success).ToList();
-            if (modeResults.Count == 0) continue;
+            var allForMode = allResults.Where(r => r.Mode == mode).ToList();
+            var modeResults = allForMode.Where(r => r.Success).ToList();
+            if (allForMode.Count == 0) continue;
             var dimScores = new Dictionary<EvalDimension, double>();
             foreach (var dim in Enum.GetValues<EvalDimension>())
             {
@@ -390,12 +410,13 @@ public class EvalService
             comparison.ModeComparisons.Add(new ModeComparison
             {
                 Mode = mode,
-                WeightedTotal = Math.Round(modeResults.Average(r => r.WeightedTotal), 1),
-                AvgResponseMs = (long)modeResults.Average(r => r.ResponseTimeMs),
-                AvgToolAccuracy = Math.Round(modeResults.Average(r => r.ToolCallAccuracy), 2),
+                WeightedTotal = Math.Round(modeResults.Count > 0 ? modeResults.Average(r => r.WeightedTotal) : 0, 1),
+                AvgResponseMs = (long)allForMode.Average(r => r.ResponseTimeMs),
+                AvgToolAccuracy = Math.Round(allForMode.Average(r => r.ToolCallAccuracy), 2),
                 AvgScores = dimScores,
-                CasesRun = modeResults.Count,
-                TotalTokens = (int)modeResults.Average(r => r.TotalTokens)
+                CasesRun = allForMode.Count,
+                SuccessCount = modeResults.Count,
+                TotalTokens = (int)allForMode.Average(r => r.TotalTokens)
             });
         }
         if (comparison.ModeComparisons.Count > 1)

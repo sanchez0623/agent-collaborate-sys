@@ -35,8 +35,8 @@ public class MetricCalculator
         double precision = expected.Count > 0 ? (double)matched / expected.Count : 0;
         double recall = actual.Count > 0 ? (double)matched / actual.Count : 0;
 
-        // F1 score
-        if (precision + recall == 0) return 0;
+        // F1 score (防御 NaN：expected>0 但 actual=0 时 recall=0/0=NaN)
+        if (precision + recall <= 0 || double.IsNaN(precision) || double.IsNaN(recall)) return 0;
         return 2 * precision * recall / (precision + recall);
     }
 

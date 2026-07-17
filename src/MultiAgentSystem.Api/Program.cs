@@ -80,7 +80,8 @@ builder.Services.AddSingleton<IChatClient>(sp =>
 {
     var raw = ChatClientFactory.Create(llmApiKey, llmBaseUrl, llmModel);
     var logger = sp.GetService<ILogger<ResilientChatClient>>();
-    return new ResilientChatClient(raw, maxRetries: 3, logger);
+    var resilient = new ResilientChatClient(raw, maxRetries: 3, logger);
+    return new TokenCountingChatClient(resilient);  // 包装 token 计数
 });
 
 // ========== 3. EF Core DbContext（配置驱动：appsettings.json → Database:Provider） ==========
