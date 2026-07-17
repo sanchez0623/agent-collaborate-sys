@@ -195,7 +195,7 @@ public class EvalService
         try
         {
             strategy = ResolveStrategy(mode, ragOn);
-            var evalSessionId = $"eval_{Guid.NewGuid():N[..8]}";
+            var evalSessionId = $"eval_{Guid.NewGuid().ToString("N")[..8]}";
             ApprovalCoordinator.CurrentSessionId = evalSessionId;
 
             // 注册人审自动决策（评测场景：第1次拒绝，后续自动同意）
