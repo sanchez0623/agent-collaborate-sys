@@ -72,14 +72,16 @@ public class EmailService
 
         try
         {
-            var response = await _chatClient.GetResponseAsync(messages, cancellationToken: CancellationToken.None);
+            var response = await _chatClient.GetResponseAsync(messages,
+                new ChatOptions { MaxOutputTokens = 1024 },
+                cancellationToken: CancellationToken.None);
             var rawText = response.Text ?? response.Messages.FirstOrDefault()?.Text ?? "";
 
             // 5. 解析 JSON
             var draft = ParseEmailDraft(rawText);
             if (draft == null)
             {
-                _logger.LogWarning("LLM 返回非 JSON 格式: {Raw}", rawText.Truncate(200));
+                _logger.LogWarning("LLM 返回非 JSON 格式: length={Len} raw={Raw}", rawText.Length, rawText.Truncate(500));
                 return null;
             }
 
