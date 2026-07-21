@@ -3,12 +3,14 @@
 // 共享同一份 events 状态，根据当前模式渲染不同 UI
 // ============================================================
 
-import { Card, Tag, Tooltip } from 'antd'
+import { Card, Tag, Popover } from 'antd'
+import type { PopoverProps } from 'antd'
 import {
   LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
   ClockCircleOutlined, ArrowRightOutlined
 } from '@ant-design/icons'
 import { AGENTS, OrchestrationEventPayload } from '../types'
+import MarkdownContent from './MarkdownContent'
 
 // 单个事件的简化状态视图
 interface AgentState {
@@ -43,6 +45,29 @@ function StatusIcon({ status, color }: { status: string; color: string }) {
     case 'handoff': return <ArrowRightOutlined style={{ color: '#faad14' }} />
     default: return <ClockCircleOutlined style={{ color: '#555' }} />
   }
+}
+
+// Agent 输出浮层：hover 展示完整内容，Markdown 渲染 + 限宽限高可滚动
+// 解决长文本撑爆屏幕的问题，同时保留标题/列表/代码块等格式
+function OutputPopover({ content, children, placement = 'right' }: {
+  content: string
+  children: React.ReactNode
+  placement?: PopoverProps['placement']
+}) {
+  return (
+    <Popover
+      trigger="hover"
+      placement={placement}
+      overlayStyle={{ maxWidth: 480 }}
+      content={
+        <div className="w-[440px] max-h-[360px] overflow-y-auto pr-1 text-sm">
+          <MarkdownContent content={content} />
+        </div>
+      }
+    >
+      {children}
+    </Popover>
+  )
 }
 
 // ============================================================
@@ -81,11 +106,11 @@ export function SequentialPanel({ events }: { events: OrchestrationEventPayload[
                 <StatusIcon status={state.status} color={meta.color} />
               </div>
               {(isDone || isRejected) && state.output && (
-                <Tooltip title={state.output} placement="right">
-                  <div className="mt-2 text-xs text-gray-400 bg-dark-900/60 rounded p-2 max-h-20 overflow-hidden whitespace-pre-wrap">
+                <OutputPopover content={state.output} placement="right">
+                  <div className="mt-2 text-xs text-gray-400 bg-dark-900/60 rounded p-2 max-h-20 overflow-hidden whitespace-pre-wrap cursor-pointer hover:bg-dark-900 transition-colors">
                     {state.output.slice(0, 120)}{state.output.length > 120 ? '...' : ''}
                   </div>
-                </Tooltip>
+                </OutputPopover>
               )}
               {isRunning && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary/30 rounded-b-xl overflow-hidden">
@@ -135,9 +160,9 @@ export function ConcurrentPanel({ events }: { events: OrchestrationEventPayload[
                 <span className="ml-auto"><StatusIcon status={state.status} color={meta.color} /></span>
               </div>
               {isDone && state.output && (
-                <Tooltip title={state.output}>
-                  <div className="text-[10px] text-gray-500 truncate">{state.output.slice(0, 40)}...</div>
-                </Tooltip>
+                <OutputPopover content={state.output} placement="top">
+                  <div className="text-[10px] text-gray-500 truncate cursor-pointer hover:text-gray-300 transition-colors">{state.output.slice(0, 40)}...</div>
+                </OutputPopover>
               )}
               {isRunning && (
                 <div className="h-0.5 bg-primary/30 rounded overflow-hidden mt-1">
@@ -205,9 +230,9 @@ export function HandoffPanel({ events }: { events: OrchestrationEventPayload[] }
                 <StatusIcon status={state.status} color={meta.color} />
               </div>
               {state.status === 'done' && state.output && (
-                <Tooltip title={state.output}>
-                  <div className="text-[10px] text-gray-500 truncate mt-1">{state.output.slice(0, 50)}...</div>
-                </Tooltip>
+                <OutputPopover content={state.output} placement="right">
+                  <div className="text-[10px] text-gray-500 truncate mt-1 cursor-pointer hover:text-gray-300 transition-colors">{state.output.slice(0, 50)}...</div>
+                </OutputPopover>
               )}
             </div>
             {idx < chain.length - 1 && (
@@ -347,11 +372,11 @@ export function MagenticPanel({ events }: { events: OrchestrationEventPayload[] 
               <StatusIcon status={targetState.status} color={AGENTS[targetAgent]?.color} />
             </div>
             {targetState.status === 'done' && targetState.output && (
-              <Tooltip title={targetState.output}>
-                <div className="text-[10px] text-gray-500 truncate mt-1">
+              <OutputPopover content={targetState.output} placement="right">
+                <div className="text-[10px] text-gray-500 truncate mt-1 cursor-pointer hover:text-gray-300 transition-colors">
                   {targetState.output.slice(0, 50)}...
                 </div>
-              </Tooltip>
+              </OutputPopover>
             )}
           </div>
         </>

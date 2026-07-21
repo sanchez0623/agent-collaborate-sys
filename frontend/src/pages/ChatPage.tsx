@@ -9,10 +9,6 @@ import {
   SendOutlined, RobotOutlined, UserOutlined, StopOutlined, PlusOutlined,
   BookOutlined,
 } from '@ant-design/icons'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeHighlight from 'rehype-highlight'
-import 'highlight.js/styles/github-dark.css'
 import { OrchestrationMode, Message, OrchestrationEventPayload, AGENTS, MODES } from '../types'
 import {
   SequentialPanel, ConcurrentPanel, HandoffPanel,
@@ -20,24 +16,9 @@ import {
 } from '../components/Panels'
 import { CrmPanel } from '../components/CrmPanel'
 import { ApprovalModal } from '../components/ApprovalModal'
+import MarkdownContent from '../components/MarkdownContent'
 import { getToken } from '../auth'
 import { kbApi, KbDatabase } from '../api'
-
-function MarkdownContent({ content }: { content: string }) {
-  return (
-    <div className="markdown-body">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-        components={{
-          a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
-  )
-}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
