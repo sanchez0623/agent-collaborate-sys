@@ -1,8 +1,7 @@
 // ============================================================
-// TestCaseStore - 评测用例仓储（EF Core）
+// TestCaseStore - 评测用例仓储（EF Core + IDbContextFactory）
 // ============================================================
 
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using MultiAgentSystem.Api.Data;
 using MultiAgentSystem.Api.Models;
@@ -11,21 +10,36 @@ namespace MultiAgentSystem.Api.Services;
 
 public class TestCaseStore
 {
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IDbContextFactory<MultiAgentDbContext> _contextFactory;
 
-    public TestCaseStore(IServiceScopeFactory scopeFactory)
+    public TestCaseStore(IDbContextFactory<MultiAgentDbContext> contextFactory)
     {
-        _scopeFactory = scopeFactory;
+        _contextFactory = contextFactory;
         using var db = Db();
         SeedPreset(db);
     }
 
-    private MultiAgentDbContext Db() => _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<MultiAgentDbContext>();
+    private MultiAgentDbContext Db() => _contextFactory.CreateDbContext();
 
     private static void SeedPreset(MultiAgentDbContext db)
     {
         if (!db.EvalTestCases.Any())
+        {
             db.EvalTestCases.AddRange(PresetCases);
+        }
+        else
+        {
+            // 存量同步：按 Title 匹配预置用例，更新 Tags（避免改标签后旧 DB 不生效）
+            var existing = db.EvalTestCases.Where(x => x.IsPreset).ToList();
+            foreach (var preset in PresetCases)
+            {
+                var match = existing.FirstOrDefault(e => e.Title == preset.Title);
+                if (match != null && match.Tags != preset.Tags)
+                {
+                    match.Tags = preset.Tags;
+                }
+            }
+        }
         db.SaveChanges();
     }
 
@@ -86,7 +100,7 @@ public class TestCaseStore
         new() { Title="技术方案评估", Category="多Agent协作", Tags="研究,分析", Question="Kubernetes和Docker Swarm,哪个更适合中小企业容器化部署？", ExpectedKeyPoints="对比\n成本\n学习曲线\n社区\n推荐", ApplicableModes="Sequential,Handoff,GroupChat,Magentic" },
         new() { Title="代码审查", Category="多Agent协作", Tags="代码,审核", Question="审查: function add(a,b){ return a-b }", ExpectedKeyPoints="函数名不符\n校验缺失\n命名", ApplicableModes="Sequential,Handoff" },
         new() { Title="方案策划", Category="多Agent协作", Tags="创意,写作", Question="设计一个SaaS产品的Go-to-Market策略", ExpectedKeyPoints="目标用户\n定价\n渠道\nMVP\n获客成本", ApplicableModes="Sequential,GroupChat,Magentic" },
-        new() { Title="知识库查询", Category="RAG", Tags="知识库,检索", Question="根据知识库,DeepSeek V4技术创新有哪些？", ExpectedKeyPoints="知识库检索\nMoE\n参数\n性能", ApplicableModes="Sequential", RequiresKnowledgeBase=true },
+        new() { Title="知识库查询", Category="RAG", Tags="知识库,检索,快速", Question="根据知识库,DeepSeek V4技术创新有哪些？", ExpectedKeyPoints="知识库检索\nMoE\n参数\n性能", ApplicableModes="Sequential", RequiresKnowledgeBase=true },
         new() { Title="文档要点", Category="RAG", Tags="知识库,摘要", Question="总结知识库中微服务架构优势", ExpectedKeyPoints="独立部署\n技术栈\n隔离\n自治", ApplicableModes="Sequential", RequiresKnowledgeBase=true },
         new() { Title="跨文档关联", Category="RAG", Tags="知识库,推理", Question="知识库中AI安全相关文档,共同建议是什么？", ExpectedKeyPoints="多文档检索\n交叉验证\n主题提取", ApplicableModes="Sequential", RequiresKnowledgeBase=true },
         new() { Title="精确数据", Category="RAG", Tags="知识库,数值", Question="知识库2025年预算数据是多少？请引用出处", ExpectedKeyPoints="精确数值\n引用来源", ApplicableModes="Sequential", RequiresKnowledgeBase=true },
@@ -96,7 +110,7 @@ public class TestCaseStore
         new() { Title="客户详情+跟进", Category="CRM", Tags="CRM,查询,跟进", Question="查看客户ID1详情,记录电话沟通了合作事宜", ExpectedKeyPoints="get_customer_detail\nadd_followup", ApplicableModes="Crm", ExpectedToolCalls="[\"get_customer_detail\",\"add_followup\"]" },
         new() { Title="敏感操作", Category="CRM", Tags="CRM,删除,人审", Question="删除客户ID999,原因重复录入", ExpectedKeyPoints="delete_customer\n审批\n人审", ApplicableModes="Crm", ExpectedToolCalls="[\"delete_customer\"]" },
         new() { Title="CRM统计", Category="CRM", Tags="CRM,分析", Question="分析客户等级分布,给出分级管理建议", ExpectedKeyPoints="search_customers\n分析\n建议", ApplicableModes="Crm", ExpectedToolCalls="[\"search_customers\"]" },
-        new() { Title="搜索+分析", Category="工具调用", Tags="搜索,Tavily", Question="搜索2024 AI领域三个最重要突破并分析影响", ExpectedKeyPoints="搜索\n列突破\n分析", ApplicableModes="Sequential,Handoff,GroupChat" },
+        new() { Title="搜索+分析", Category="工具调用", Tags="搜索,Tavily,快速", Question="搜索2024 AI领域三个最重要突破并分析影响", ExpectedKeyPoints="搜索\n列突破\n分析", ApplicableModes="Sequential,Handoff,GroupChat" },
         new() { Title="知识库+搜索", Category="工具调用", Tags="知识库,搜索,混合", Question="对比知识库中Docker和网上Podman最新信息", ExpectedKeyPoints="知识库检索\n网络搜索\n对比", ApplicableModes="Sequential,Handoff", RequiresKnowledgeBase=true },
         new() { Title="多工具串联", Category="工具调用", Tags="CRM,搜索,串联", Question="搜索最新AI芯片新闻,然后创建新客户NVIDIA", ExpectedKeyPoints="搜索\ncreate_customer\n串联", ApplicableModes="Crm", ExpectedToolCalls="[\"create_customer\"]" },
         new() { Title="工具验证", Category="工具调用", Tags="工具,CRM", Question="用search_customers查腾讯,然后get_customer_detail看第一个", ExpectedKeyPoints="两次调用\n参数传递", ApplicableModes="Crm", ExpectedToolCalls="[\"search_customers\",\"get_customer_detail\"]" },

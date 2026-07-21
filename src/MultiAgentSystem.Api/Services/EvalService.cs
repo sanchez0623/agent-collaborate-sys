@@ -37,6 +37,7 @@ public class EvalService
 
     private static readonly ConcurrentDictionary<string, EvalTask> RunningTasks = new();
     private static readonly ConcurrentDictionary<string, Channel<OrchestrationEvent>> ProgressChannels = new();
+    private static readonly ConcurrentDictionary<string, CancellationTokenSource> TaskCancellations = new();
 
     public EvalService(
         IChatClient chatClient, TestCaseStore caseStore, EvalReportStore reportStore,
@@ -49,6 +50,20 @@ public class EvalService
         _judge = judge; _metrics = metrics; _logger = logger; _approvals = approvals;
         _sequential = sequential; _concurrent = concurrent; _handoff = handoff;
         _groupChat = groupChat; _magentic = magentic; _crm = crm; _rag = rag;
+
+        // 启动清理：进程重启后，DB 中残留的 running 任务实际已死，标记为 interrupted
+        _ = CleanupStaleTasksAsync();
+    }
+
+    private async Task CleanupStaleTasksAsync()
+    {
+        try
+        {
+            var count = await _reportStore.MarkStaleTasksInterruptedAsync();
+            if (count > 0)
+                _logger.LogWarning("启动清理: {Count} 个残留 running 任务已标记为 interrupted（进程重启导致中断）", count);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "启动清理残留任务失败"); }
     }
 
     // ===== 公开 API =====
@@ -61,12 +76,24 @@ public class EvalService
             CaseSet = req.CaseSet, Modes = req.Modes,
             Status = "running", CreatedAt = DateTime.UtcNow
         };
+        var cts = new CancellationTokenSource();
         RunningTasks[task.Id] = task;
         ProgressChannels[task.Id] = Channel.CreateUnbounded<OrchestrationEvent>();
+        TaskCancellations[task.Id] = cts;
 
         await _reportStore.SaveTaskAsync(task);
-        _ = ExecuteAsync(task, req, ProgressChannels[task.Id]);
+        _ = ExecuteAsync(task, req, ProgressChannels[task.Id], cts.Token);
         return task.Id;
+    }
+
+    /// <summary>取消正在执行的评测任务</summary>
+    public async Task<bool> CancelTaskAsync(string taskId)
+    {
+        if (!TaskCancellations.TryGetValue(taskId, out var cts)) return false;
+        cts.Cancel();
+        await _reportStore.UpdateTaskProgressAsync(taskId, 0, 0, "cancelled");
+        _logger.LogInformation("评测任务已取消: taskId={Id}", taskId);
+        return true;
     }
 
     public ChannelReader<OrchestrationEvent>? GetProgressChannel(string taskId)
@@ -81,9 +108,12 @@ public class EvalService
     public async Task<List<EvalReport>> ListReportsAsync(int limit = 20)
         => await _reportStore.ListReportsAsync(limit);
 
+    public async Task<bool> DeleteReportAsync(string taskId)
+        => await _reportStore.DeleteReportAsync(taskId);
+
     // ===== 后台执行主循环 =====
 
-    private async Task ExecuteAsync(EvalTask task, EvalRunRequest req, Channel<OrchestrationEvent> channel)
+    private async Task ExecuteAsync(EvalTask task, EvalRunRequest req, Channel<OrchestrationEvent> channel, CancellationToken cancellationToken)
     {
         try
         {
@@ -107,63 +137,106 @@ public class EvalService
 
             await _reportStore.UpdateTaskProgressAsync(task.Id, 0, 0);
 
-            var allResults = new List<EvalCaseResult>();
-            var semaphore = new SemaphoreSlim(req.MaxConcurrency > 0 ? req.MaxConcurrency : 1);
+            var allResults = new ConcurrentBag<EvalCaseResult>();
             int completed = 0, failed = 0;
 
-            foreach (var mode in req.Modes)
-            foreach (var tc in cases)
-            foreach (var ragOn in ragModes)
-            {
-                await semaphore.WaitAsync();
-                try
-                {
-                    _logger.LogInformation("评测用例开始: case=#{Id} {Title} mode={Mode} rag={Rag}", tc.Id, tc.Title, mode, ragOn);
+            // 构建任务列表：(mode, testCase, ragOn) 的所有组合，跳过模式不适用的用例
+            var workItems = req.Modes
+                .SelectMany(mode => cases
+                    .Where(tc => string.IsNullOrWhiteSpace(tc.ApplicableModes) || tc.ApplicableModes.Contains(mode))
+                    .SelectMany(tc => ragModes.Select(ragOn => (mode, tc, ragOn))))
+                .ToList();
 
-                    var result = await ExecuteRealCaseAsync(tc, mode, ragOn, req.TimeoutSeconds);
+            var skippedCount = cases.Count * req.Modes.Count * ragModes.Count - workItems.Count;
+            if (skippedCount > 0)
+                _logger.LogInformation("模式适配校验: 跳过 {Skipped} 个不适用组合（用例 ApplicableModes 不含所选模式）", skippedCount);
+
+            int totalCombinations = workItems.Count;
+
+            var maxConcurrency = Math.Clamp(req.MaxConcurrency, 1, 5);
+            _logger.LogInformation("并发执行: maxConcurrency={Conc} totalItems={Items}", maxConcurrency, workItems.Count);
+
+            await Parallel.ForEachAsync(workItems,
+                new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = cancellationToken },
+                async (item, ct) =>
+                {
+                    var (mode, tc, ragOn) = item;
+                    var retryCount = Math.Clamp(req.RetryCount, 0, 3);
+                    EvalCaseResult result;
+
+                    // 失败重试：超时/LLM 报错时整例重跑，最多 retryCount 次
+                    int attempt = 0;
+                    while (true)
+                    {
+                        try
+                        {
+                            if (attempt > 0)
+                                _logger.LogWarning("评测用例重试 {Attempt}/{Max}: case=#{Id} mode={Mode}", attempt, retryCount, tc.Id, mode);
+                            else
+                                _logger.LogInformation("评测用例开始: case=#{Id} {Title} mode={Mode} rag={Rag}", tc.Id, tc.Title, mode, ragOn);
+
+                            result = await ExecuteRealCaseAsync(tc, mode, ragOn, req.TimeoutSeconds, req.JudgeCount);
+                            if (result.Success || attempt >= retryCount || ct.IsCancellationRequested) break;
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            _logger.LogError(ex, "评测用例异常: case=#{Id} mode={Mode} attempt={Attempt}", tc.Id, mode, attempt);
+                            result = new EvalCaseResult
+                            {
+                                TaskId = task.Id, TestCaseId = tc.Id, Mode = mode, RagEnabled = ragOn,
+                                Success = false, ErrorMessage = ex.Message
+                            };
+                            if (attempt >= retryCount || ct.IsCancellationRequested) break;
+                        }
+                        attempt++;
+                    }
+
+                    result.TaskId = task.Id;
                     allResults.Add(result);
 
-                    if (result.Success) completed++; else failed++;
+                    var done = result.Success ? Interlocked.Increment(ref completed) : Interlocked.Increment(ref failed);
+                    var currentDone = completed + failed;
                     task.CompletedCases = completed;
                     task.FailedCases = failed;
 
-                    result.TaskId = task.Id;
                     await _reportStore.SaveCaseResultAsync(result);
                     await _reportStore.UpdateTaskProgressAsync(task.Id, completed, failed);
 
-                    _logger.LogInformation("评测用例完成: case=#{Id} success={Ok} score={Score:F1} dims={Dims} ms={Ms} tokens={Tk} tools={Tl} err={Err}",
+                    _logger.LogInformation("评测用例完成: case=#{Id} success={Ok} score={Score:F1} dims={Dims} ms={Ms} tokens={Tk} tools={Tl} retries={Retry} err={Err}",
                         tc.Id, result.Success,
                         result.Dimensions.Count > 0 ? result.Dimensions.Average(d => d.Score) : 0,
                         result.Dimensions.Count,
                         result.ResponseTimeMs, result.TotalTokens,
-                        result.ToolCallLog,
+                        result.ToolCallLog, attempt,
                         result.ErrorMessage ?? "-");
 
-                    PushProgress(channel, task, completed + failed, cases.Count * req.Modes.Count * ragModes.Count);
-                }
-                finally { semaphore.Release(); }
-            }
+                    PushProgress(channel, task, currentDone, totalCombinations, tc.Title, mode);
+                });
 
             // A/B 对比 + LLM 分析
-            _logger.LogInformation("评测全部用例完成,生成A/B对比: totalResults={Count}", allResults.Count);
-            var comparison = GenerateComparison(allResults, req.Modes);
-            try { comparison.Summary = await AnalyzeBestModeAsync(comparison, allResults); }
+            var resultList = allResults.ToList();
+            _logger.LogInformation("评测全部用例完成,生成A/B对比: totalResults={Count}", resultList.Count);
+            var comparison = GenerateComparison(resultList, req.Modes);
+            try { comparison.Summary = await AnalyzeBestModeAsync(comparison, resultList); }
             catch (Exception ex) { _logger.LogWarning(ex, "LLM分析最佳模式失败"); }
+            try { comparison.Improvement = await GenerateImprovementAsync(comparison, resultList); }
+            catch (Exception ex) { _logger.LogWarning(ex, "LLM生成改进建议失败"); }
 
+            var successResults = resultList.Where(r => r.Success).ToList();
             var report = new EvalReport
             {
                 TaskId = task.Id, CaseSet = task.CaseSet, Modes = req.Modes,
-                Status = "completed", TotalCases = allResults.Count,
+                Status = "completed", TotalCases = resultList.Count,
                 SuccessCases = completed, FailedCases = failed,
-                OverallScore = allResults.Count > 0 ? allResults.Average(r => r.WeightedTotal) : 0,
-                AvgResponseMs = allResults.Count > 0 ? (long)allResults.Average(r => r.ResponseTimeMs) : 0,
-                TotalTokens = allResults.Sum(r => r.TotalTokens),
-                CaseResults = allResults, Comparison = comparison,
+                OverallScore = successResults.Count > 0 ? Math.Round(successResults.Average(r => r.WeightedAverage), 2) : 0,
+                AvgResponseMs = resultList.Count > 0 ? (long)resultList.Average(r => r.ResponseTimeMs) : 0,
+                TotalTokens = resultList.Sum(r => r.TotalTokens),
+                CaseResults = resultList, Comparison = comparison,
                 CreatedAt = task.CreatedAt, CompletedAt = DateTime.UtcNow
             };
 
             _logger.LogInformation("保存评测报告: taskId={Id} overall={Score:F1} success={Ok}/{Total} ms={Ms} tokens={Tk}",
-                task.Id, report.OverallScore, completed, allResults.Count, report.AvgResponseMs, report.TotalTokens);
+                task.Id, report.OverallScore, completed, resultList.Count, report.AvgResponseMs, report.TotalTokens);
 
             await _reportStore.FinalizeTaskAsync(report);
             task.Status = "completed";
@@ -171,18 +244,31 @@ public class EvalService
             _logger.LogInformation("评测任务完成: taskId={Id}", task.Id);
             channel.Writer.TryComplete();
         }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("评测任务被取消: taskId={Id}", task.Id);
+            task.Status = "cancelled";
+            await _reportStore.UpdateTaskProgressAsync(task.Id, task.CompletedCases, task.FailedCases, "cancelled");
+            channel.Writer.TryComplete();
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "评测执行失败: taskId={Id}", task.Id);
             task.Status = "failed";
+            await _reportStore.UpdateTaskProgressAsync(task.Id, task.CompletedCases, task.FailedCases, "failed");
             channel.Writer.TryComplete();
         }
-        finally { RunningTasks.TryRemove(task.Id, out _); }
+        finally
+        {
+            RunningTasks.TryRemove(task.Id, out _);
+            TaskCancellations.TryRemove(task.Id, out var cts);
+            cts?.Dispose();
+        }
     }
 
     // ===== 真实编排管道执行 =====
 
-    private async Task<EvalCaseResult> ExecuteRealCaseAsync(EvalTestCase tc, string mode, bool ragOn, int timeoutSec)
+    private async Task<EvalCaseResult> ExecuteRealCaseAsync(EvalTestCase tc, string mode, bool ragOn, int timeoutSec, int judgeCount = 1)
     {
         var result = new EvalCaseResult
         {
@@ -271,7 +357,7 @@ public class EvalService
         // LLM Judge 评分（基于真实对话记录）
         _logger.LogDebug("用例开始Judge评分: case=#{Id}", tc.Id);
         TokenCountingChatClient.StartSession($"{evalSessionId}_judge");
-        var judgeScores = await _judge.JudgeAsync(tc, tc.Question, result.AgentOutputs, 1);
+        var judgeScores = await _judge.JudgeAsync(tc, tc.Question, result.AgentOutputs, judgeCount);
         var judgeUsage = TokenCountingChatClient.EndSession($"{evalSessionId}_judge");
         // 总 token = 策略 + Judge
         result.InputTokens += judgeUsage.InputTokens;
@@ -345,14 +431,17 @@ public class EvalService
 
     // ===== SSE 进度 + 其他工具方法 =====
 
-    private static void PushProgress(Channel<OrchestrationEvent> channel, EvalTask task, int done, int total)
+    private static void PushProgress(Channel<OrchestrationEvent> channel, EvalTask task, int done, int total, string currentCase = "", string currentMode = "")
     {
+        var percent = total > 0 ? Math.Round((double)done / total * 100, 1) : 0;
         channel.Writer.TryWrite(new OrchestrationEvent(
             OrchestrationEventType.AgentDelta,
             Status: $"{done}/{total}",
             Output: JsonSerializer.Serialize(new
             {
-                taskId = task.Id, done, total,
+                type = "eval_progress",
+                taskId = task.Id, done, total, percent,
+                currentCase, currentMode,
                 completed = task.CompletedCases, failed = task.FailedCases
             })));
     }
@@ -393,6 +482,43 @@ public class EvalService
         return resp.Text?.Trim() ?? comp.Summary;
     }
 
+    /// <summary>基于评测结果生成可落地的改进建议（LLM）</summary>
+    private async Task<string> GenerateImprovementAsync(ABComparison comp, List<EvalCaseResult> results)
+    {
+        var success = results.Where(r => r.Success).ToList();
+        var failed = results.Where(r => !r.Success).ToList();
+        if (results.Count == 0) return "";
+
+        // 各维度平均分
+        var dimAvg = new Dictionary<EvalDimension, double>();
+        foreach (var dim in Enum.GetValues<EvalDimension>())
+        {
+            var scores = success.SelectMany(r => r.Dimensions).Where(d => d.Dimension == dim).ToList();
+            dimAvg[dim] = scores.Count > 0 ? Math.Round(scores.Average(d => d.Score), 1) : 0;
+        }
+        var weakest = dimAvg.OrderBy(kv => kv.Value).First();
+        var strongest = dimAvg.OrderByDescending(kv => kv.Value).First();
+
+        var sb = new StringBuilder();
+        sb.AppendLine("你是一个多Agent系统质量顾问。根据以下评测数据，给出 2-4 条具体、可落地的改进建议。\n");
+        sb.AppendLine($"成功率：{success.Count}/{results.Count}");
+        sb.AppendLine($"最弱维度：{weakest.Key}（{weakest.Value} 分） | 最强维度：{strongest.Key}（{strongest.Value} 分）");
+        sb.AppendLine("各维度平均分：");
+        foreach (var kv in dimAvg) sb.AppendLine($"- {kv.Key}: {kv.Value}");
+        if (failed.Count > 0)
+        {
+            sb.AppendLine($"\n失败用例（{failed.Count} 个）错误摘要：");
+            foreach (var f in failed.Take(5))
+                sb.AppendLine($"- 用例#{f.TestCaseId} [{f.Mode}]: {(f.ErrorMessage?.Length > 80 ? f.ErrorMessage[..80] + "..." : f.ErrorMessage)}");
+        }
+        sb.AppendLine("\n要求：建议要针对最弱维度和失败原因，指出可能的架构/Prompt/工具层面的改进方向。");
+        sb.AppendLine("输出纯文本，每条建议一行，用「1. 2. 3.」编号，不要 markdown 标题，总字数不超过 200 字。");
+
+        var msg = new ChatMsg(ChatRole.User, sb.ToString());
+        var resp = await _chatClient.GetResponseAsync([msg], new() { MaxOutputTokens = 400, Temperature = 0.3f });
+        return resp.Text?.Trim() ?? "";
+    }
+
     private ABComparison GenerateComparison(List<EvalCaseResult> allResults, List<string> modes)
     {
         var comparison = new ABComparison { Summary = "" };
@@ -405,12 +531,12 @@ public class EvalService
             foreach (var dim in Enum.GetValues<EvalDimension>())
             {
                 var scores = modeResults.SelectMany(r => r.Dimensions).Where(d => d.Dimension == dim).ToList();
-                dimScores[dim] = scores.Count > 0 ? scores.Average(d => d.Score) : 0;
+                dimScores[dim] = scores.Count > 0 ? Math.Round(scores.Average(d => d.Score), 2) : 0;
             }
             comparison.ModeComparisons.Add(new ModeComparison
             {
                 Mode = mode,
-                WeightedTotal = Math.Round(modeResults.Count > 0 ? modeResults.Average(r => r.WeightedTotal) : 0, 1),
+                WeightedTotal = Math.Round(modeResults.Count > 0 ? modeResults.Average(r => r.WeightedAverage) : 0, 2),
                 AvgResponseMs = (long)allForMode.Average(r => r.ResponseTimeMs),
                 AvgToolAccuracy = Math.Round(allForMode.Average(r => r.ToolCallAccuracy), 2),
                 AvgScores = dimScores,
@@ -425,6 +551,30 @@ public class EvalService
             var runner = comparison.ModeComparisons.OrderByDescending(m => m.WeightedTotal).Skip(1).First();
             comparison.Summary = $"{best.Mode}: 总分{best.WeightedTotal} 工具准确率{best.AvgToolAccuracy:P0} / {runner.Mode}: 总分{runner.WeightedTotal} 工具准确率{runner.AvgToolAccuracy:P0}";
         }
+
+        // RAG 开关 A/B 对比：仅当同一模式同时存在 ragOn/ragOff 结果时填充
+        foreach (var mode in modes)
+        {
+            foreach (var ragOn in new[] { true, false })
+            {
+                var group = allResults.Where(r => r.Mode == mode && r.RagEnabled == ragOn && r.Success).ToList();
+                if (group.Count == 0) continue;
+                var hasCounterpart = allResults.Any(r => r.Mode == mode && r.RagEnabled != ragOn && r.Success);
+                if (!hasCounterpart) continue;
+
+                var hallScores = group.SelectMany(r => r.Dimensions).Where(d => d.Dimension == EvalDimension.Hallucination).ToList();
+                var accScores = group.SelectMany(r => r.Dimensions).Where(d => d.Dimension == EvalDimension.Accuracy).ToList();
+                comparison.RagComparisons.Add(new RagComparison
+                {
+                    Mode = mode,
+                    RagEnabled = ragOn,
+                    WeightedTotal = Math.Round(group.Average(r => r.WeightedAverage), 2),
+                    AvgHallucination = Math.Round(hallScores.Count > 0 ? hallScores.Average(d => d.Score) : 0, 1),
+                    AvgAccuracy = Math.Round(accScores.Count > 0 ? accScores.Average(d => d.Score) : 0, 1)
+                });
+            }
+        }
+
         return comparison;
     }
 }

@@ -1,10 +1,10 @@
 // ============================================================
-// EvalReportStore - 评测报告仓储（EF Core + IServiceScopeFactory）
+// EvalReportStore - 评测报告仓储（EF Core + IDbContextFactory）
+// IDbContextFactory 直接创建独立 context 实例，无需手动 CreateScope，无泄漏
 // ============================================================
 
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using MultiAgentSystem.Api.Data;
 using MultiAgentSystem.Api.Models;
 
@@ -12,12 +12,12 @@ namespace MultiAgentSystem.Api.Services;
 
 public class EvalReportStore
 {
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IDbContextFactory<MultiAgentDbContext> _contextFactory;
 
-    public EvalReportStore(IServiceScopeFactory scopeFactory)
-        => _scopeFactory = scopeFactory;
+    public EvalReportStore(IDbContextFactory<MultiAgentDbContext> contextFactory)
+        => _contextFactory = contextFactory;
 
-    private MultiAgentDbContext Db() => _scopeFactory.CreateScope().ServiceProvider.GetRequiredService<MultiAgentDbContext>();
+    private MultiAgentDbContext Db() => _contextFactory.CreateDbContext();
 
     public async Task SaveTaskAsync(EvalTask task)
     {
@@ -36,13 +36,37 @@ public class EvalReportStore
         if (e != null) { e.SuccessCases = completed; e.FailedCases = failed; e.Status = status; await db.SaveChangesAsync(); }
     }
 
+    /// <summary>启动清理：将所有残留 running 状态的任务标记为 interrupted（进程重启后它们不可能还活着）</summary>
+    public async Task<int> MarkStaleTasksInterruptedAsync()
+    {
+        using var db = Db();
+        var stale = await db.EvalReports.Where(x => x.Status == "running").ToListAsync();
+        foreach (var e in stale) e.Status = "interrupted";
+        await db.SaveChangesAsync();
+        return stale.Count;
+    }
+
+    /// <summary>删除评测报告及其用例结果</summary>
+    public async Task<bool> DeleteReportAsync(string taskId)
+    {
+        using var db = Db();
+        var report = await db.EvalReports.FindAsync(taskId);
+        if (report == null) return false;
+        var caseResults = await db.EvalCaseResults.Where(x => x.TaskId == taskId).ToListAsync();
+        db.EvalCaseResults.RemoveRange(caseResults);
+        db.EvalReports.Remove(report);
+        await db.SaveChangesAsync();
+        return true;
+    }
+
     public async Task FinalizeTaskAsync(EvalReport report)
     {
         using var db = Db();
         var e = await db.EvalReports.FindAsync(report.TaskId);
         if (e != null)
         {
-            e.Status = "completed"; e.SuccessCases = report.SuccessCases; e.FailedCases = report.FailedCases;
+            e.Status = "completed"; e.TotalCases = report.TotalCases;
+            e.SuccessCases = report.SuccessCases; e.FailedCases = report.FailedCases;
             e.OverallScore = report.OverallScore; e.AvgResponseMs = (long)report.AvgResponseMs;
             e.TotalTokens = report.TotalTokens;
             e.ComparisonJson = report.Comparison != null ? JsonSerializer.Serialize(report.Comparison) : null;
@@ -102,8 +126,10 @@ public class EvalReportStore
         if (task == null) return null;
         var caseResults = await GetCaseResultsAsync(taskId);
         double avgMs = caseResults.Count > 0 ? caseResults.Average(r => r.ResponseTimeMs) : 0;
-        var allDims = caseResults.SelectMany(r => r.Dimensions).ToList();
-        double overall = allDims.Count > 0 ? allDims.Average(d => d.Score) : 0;
+        // 统一口径：仅对成功用例取 WeightedAverage（0-10 加权平均）
+        var successResults = caseResults.Where(r => r.Success).ToList();
+        double overall = successResults.Count > 0
+            ? Math.Round(successResults.Average(r => r.WeightedAverage), 2) : 0;
         ABComparison? comparison = null;
         using (var db = Db()) {
             var entity = await db.EvalReports.FindAsync(taskId);

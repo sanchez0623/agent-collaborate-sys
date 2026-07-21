@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 ﻿// ============================================================
 // MultiAgentSystem.Api - MVP-4 启动入口
 // 架构：分层 + 策略模式 + 适配器模式 + 人审协调
@@ -85,15 +86,22 @@ builder.Services.AddSingleton<IChatClient>(sp =>
 });
 
 // ========== 3. EF Core DbContext（配置驱动：appsettings.json → Database:Provider） ==========
+// 使用 AddDbContextFactory：同时注册 IDbContextFactory（Singleton 存储直接创建 context，无需手动 CreateScope）
+// SQLite 路径优先级：DB_PATH 环境变量（Docker 卷挂载）> Database:ConnectionString > 默认相对路径
+// 注意：必须读 DB_PATH，否则数据落在容器可写层，重建容器即丢失（与 ConversationStore 保持一致）
 var dbCfg = builder.Configuration.GetSection("Database").Get<MultiAgentSystem.Api.Data.DatabaseConfig>() ?? new();
-builder.Services.AddDbContext<MultiAgentSystem.Api.Data.MultiAgentDbContext>(options =>
+var dbPathEnv = Environment.GetEnvironmentVariable("DB_PATH");
+builder.Services.AddDbContextFactory<MultiAgentSystem.Api.Data.MultiAgentDbContext>(options =>
 {
     if (dbCfg.Provider == "pgsql")
         options.UseNpgsql(dbCfg.ConnectionString);
     else
-        options.UseSqlite(string.IsNullOrWhiteSpace(dbCfg.ConnectionString)
-            ? "Data Source=multiagent.db"
-            : dbCfg.ConnectionString);
+    {
+        var sqliteConn = !string.IsNullOrWhiteSpace(dbPathEnv)
+            ? $"Data Source={dbPathEnv}"
+            : (!string.IsNullOrWhiteSpace(dbCfg.ConnectionString) ? dbCfg.ConnectionString : "Data Source=multiagent.db");
+        options.UseSqlite(sqliteConn);
+    }
 });
 
 // ========== 4. 业务存储（Singleton + IServiceScopeFactory 避免生命周期冲突） ==========
@@ -181,11 +189,80 @@ builder.Services.AddSingleton<RagStrategy>();
 
 var app = builder.Build();
 
-// 启动时一次性建表（SQLite，16张表）
+// 启动时建表（SQLite）——按"缺哪张补哪张"处理，兼容三种情况：
+//   1. 全新库：一次性建全部表
+//   2. 旧版本遗留的不完整库（如卷里 MVP-5 之前的库，有 customers 但缺 eval_* 表）：只补缺失表，保留已有数据
+//   3. 表齐全：什么都不做
+// 不能只用 EnsureCreated：文件存在即跳过，会导致新增表缺失报 "no such table"。
 using (var scope = app.Services.CreateScope())
 {
-    scope.ServiceProvider.GetRequiredService<MultiAgentSystem.Api.Data.MultiAgentDbContext>()
-        .Database.EnsureCreated();
+    var db = scope.ServiceProvider.GetRequiredService<MultiAgentSystem.Api.Data.MultiAgentDbContext>();
+    EnsureEfSchema(db, dbCfg.Provider);
+}
+
+// 确保 EF 模型的所有表都存在；缺失则补建（不动已有表与数据）
+static void EnsureEfSchema(MultiAgentSystem.Api.Data.MultiAgentDbContext db, string provider)
+{
+    var creator = db.Database.GetService<Microsoft.EntityFrameworkCore.Storage.IRelationalDatabaseCreator>();
+    if (!creator.Exists()) creator.Create();
+
+    // pgsql 走 EF 自带判断（本项目 Docker 部署固定 sqlite，pgsql 仅保底）
+    if (provider == "pgsql")
+    {
+        if (!creator.HasTables()) creator.CreateTables();
+        return;
+    }
+
+    // 读取真实库中已存在的表名
+    var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var conn = db.Database.GetDbConnection();
+    try
+    {
+        if (conn.State != System.Data.ConnectionState.Open) conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table'";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read()) existing.Add(reader.GetString(0));
+    }
+    finally { if (conn.State == System.Data.ConnectionState.Open) conn.Close(); }
+
+    // 模型中应有的表名
+    var modelTables = db.Model.GetEntityTypes()
+        .Select(e => e.GetTableName())
+        .Where(n => !string.IsNullOrEmpty(n))
+        .Select(n => n!)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    var missing = modelTables.Where(t => !existing.Contains(t)).ToList();
+    if (missing.Count == 0) return; // 表齐全
+
+    // 一张模型表都没有 → 全新库，直接整体建表
+    if (missing.Count == modelTables.Count)
+    {
+        creator.CreateTables();
+        return;
+    }
+
+    // 部分缺失（旧版本库）：在内存库生成完整 schema，提取缺失表的 CREATE TABLE 语句应用到真实库
+    var memOpts = new DbContextOptionsBuilder<MultiAgentSystem.Api.Data.MultiAgentDbContext>()
+        .UseSqlite("Data Source=:memory:")
+        .Options;
+    using var mem = new MultiAgentSystem.Api.Data.MultiAgentDbContext(memOpts);
+    mem.Database.OpenConnection(); // 保持内存库存活
+    mem.Database.EnsureCreated();
+
+    foreach (var table in missing)
+    {
+        string? createSql = null;
+        using (var q = mem.Database.GetDbConnection().CreateCommand())
+        {
+            q.CommandText = $"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table}'";
+            createSql = q.ExecuteScalar()?.ToString();
+        }
+        if (!string.IsNullOrEmpty(createSql))
+            db.Database.ExecuteSqlRaw(createSql);
+    }
 }
 
 // ========== 10. 中间件管道 ==========

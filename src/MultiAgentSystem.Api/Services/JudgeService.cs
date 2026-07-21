@@ -86,13 +86,31 @@ public class JudgeService
             var items = JsonSerializer.Deserialize<List<JudgeScoreItem>>(json, opts);
             if (items == null || items.Count == 0) return null;
 
-            return items.Select(item => new DimensionScore
+            var results = new List<DimensionScore>();
+            foreach (var item in items)
             {
-                Dimension = ParseDimension(item.Dimension),
-                Score = Math.Clamp(item.Score, 0, 10),
-                Weight = new EvalWeights().GetWeight(ParseDimension(item.Dimension)),
-                Reasoning = item.Reasoning ?? ""
-            }).ToList();
+                var dim = ParseDimension(item.Dimension);
+                if (dim == null)
+                {
+                    _logger.LogWarning("Judge 返回未知维度 '{Dim}'，已丢弃", item.Dimension);
+                    continue;
+                }
+                results.Add(new DimensionScore
+                {
+                    Dimension = dim.Value,
+                    Score = Math.Clamp(item.Score, 0, 10),
+                    Weight = new EvalWeights().GetWeight(dim.Value),
+                    Reasoning = item.Reasoning ?? ""
+                });
+            }
+
+            // 有效维度不足 4 个视为解析失败，触发重试
+            if (results.Count < 4)
+            {
+                _logger.LogWarning("Judge 有效维度仅 {Count}/4，视为解析失败", results.Count);
+                return null;
+            }
+            return results;
         }
         catch (Exception ex)
         {
@@ -101,13 +119,13 @@ public class JudgeService
         }
     }
 
-    private static EvalDimension ParseDimension(string name) => name switch
+    private static EvalDimension? ParseDimension(string name) => name?.ToLowerInvariant() switch
     {
-        "accuracy" or "Accuracy" => EvalDimension.Accuracy,
-        "completeness" or "Completeness" => EvalDimension.Completeness,
-        "relevance" or "Relevance" => EvalDimension.Relevance,
-        "hallucination" or "Hallucination" => EvalDimension.Hallucination,
-        _ => EvalDimension.Accuracy
+        "accuracy" => EvalDimension.Accuracy,
+        "completeness" => EvalDimension.Completeness,
+        "relevance" => EvalDimension.Relevance,
+        "hallucination" => EvalDimension.Hallucination,
+        _ => null  // 未知维度丢弃，不再 fallback 到 Accuracy
     };
 
     private static List<DimensionScore> GetDefaultScores(string reason)

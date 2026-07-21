@@ -197,4 +197,7 @@ public record KbCreateRequest(string Name, string Description);
 /// </summary>
 /// <param name="DatabaseId">目标知识库 ID</param>
 /// <param name="TestCases">评测用例列表</param>
-public record EvalTestRequest(int DatabaseId, List<EvalTestCase> TestCases);
+public record EvalTestRequest(int DatabaseId, List<RagEvalCase> TestCases);
+
+/// <summary>RAG 简易评测用例（字段与前端 RagEvalPage 提交格式对齐）</summary>
+public record RagEvalCase(string Question, string ExpectedAnswer);

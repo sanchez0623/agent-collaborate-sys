@@ -2,9 +2,12 @@
 // EvalModels - MVP-5 评测体系数据模型
 // ============================================================
 
+using System.Text.Json.Serialization;
+
 namespace MultiAgentSystem.Api.Models;
 
 /// <summary>6 维度评分名称</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum EvalDimension
 {
     Accuracy,      // 准确性 — LLM-Judge
@@ -115,7 +118,13 @@ public class EvalCaseResult
     // 原始 Judge 输出
     public string JudgeRawOutput { get; set; } = "";
 
+    /// <summary>综合分（0-10 加权平均）= Σ(Score×Weight) / Σ(Weight)，唯一标准口径</summary>
+    public double WeightedAverage => Dimensions.Count > 0 && Dimensions.Sum(d => d.Weight) > 0
+        ? Dimensions.Sum(d => d.WeightedScore) / Dimensions.Sum(d => d.Weight) : 0;
+
+    /// <summary>加权总分（原始值，满分 77，仅内部对比用）</summary>
     public double WeightedTotal => Dimensions.Sum(d => d.WeightedScore);
+    /// <summary>简单平均（无权重，仅参考）</summary>
     public double SimpleAverage => Dimensions.Count > 0
         ? Dimensions.Average(d => d.Score) : 0;
 
@@ -129,6 +138,8 @@ public class ABComparison
     public List<ModeComparison> ModeComparisons { get; set; } = new();
     public List<RagComparison> RagComparisons { get; set; } = new();
     public string Summary { get; set; } = "";
+    /// <summary>LLM 生成的改进建议（评测完成时生成，随 ComparisonJson 持久化）</summary>
+    public string Improvement { get; set; } = "";
 }
 
 public class ModeComparison
@@ -181,6 +192,8 @@ public class EvalRunRequest
     public int JudgeCount { get; set; } = 1;
     public int TimeoutSeconds { get; set; } = 60;
     public int MaxConcurrency { get; set; } = 1;
+    /// <summary>单用例失败重试次数（0-3，默认 2；超时/LLM 报错时整例重跑）</summary>
+    public int RetryCount { get; set; } = 2;
 }
 
 /// <summary>Markdown 报告导出结果</summary>

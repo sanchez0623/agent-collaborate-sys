@@ -144,11 +144,15 @@ public static class KbEndpoints
                 }
                 catch { actualAnswer = "(LLM 调用失败)"; }
 
-                bool isCorrect = !string.IsNullOrEmpty(tc.ExpectedKeyPoints)
-                    && actualAnswer.Contains(tc.ExpectedKeyPoints, StringComparison.OrdinalIgnoreCase);
+                // 要点拆分 + 模糊匹配：命中率 >= 60% 判定为正确
+                var keyPoints = (tc.ExpectedAnswer ?? "")
+                    .Split(['；', ';', '，', ',', '、', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(p => p.Length > 0).ToList();
+                bool isCorrect = keyPoints.Count > 0
+                    && (double)keyPoints.Count(p => actualAnswer.Contains(p, StringComparison.OrdinalIgnoreCase)) / keyPoints.Count >= 0.6;
                 if (isCorrect) correct++;
 
-                details.Add(new RAGCaseResult(tc.Question, tc.ExpectedKeyPoints ?? "", actualAnswer, isRetrieved, isCorrect));
+                details.Add(new RAGCaseResult(tc.Question, tc.ExpectedAnswer ?? "", actualAnswer, isRetrieved, isCorrect));
             }
 
             var total = req.TestCases.Count;
