@@ -4,14 +4,14 @@
 >
 > 一个从单 Agent 对话逐步演进到 11 Agent + 7 种编排模式 + RAG 知识库 + CRM 人审的多 Agent 平台。
 
-## 当前进度：MVP-4 ✅
+## 当前进度：MVP-5 ✅
 
 - [x] **MVP-0**：单 Agent 对话 + SSE 流式 + 暗黑主题 + SQLite
 - [x] **MVP-1**：3 Agent 流水线协作（Researcher → Writer → Critic）+ 退回重写
 - [x] **MVP-2**：7 种编排模式（Sequential / Concurrent / Handoff / GroupChat / Magentic 等）
 - [x] **MVP-3**：RAG 知识库（文档上传 → 解析 → 嵌入 → 混合检索 → 评测）
 - [x] **MVP-4**：CRM 集成 + JWT 鉴权 + 人审机制 + 工单 + 审计日志
-- [ ] MVP-5：评测体系完善（RAG 评测雏形已具备，待扩展为多维度基准）
+- [x] **MVP-5**：评测体系（6 维度 LLM-as-Judge 评分 + 7 模式 A/B 对比 + RAG 开关对比 + 历史趋势 + Docker 数据持久化）
 
 ---
 
@@ -27,6 +27,7 @@
 | 🧾 **工单系统** | 状态流转 Pending → Processing → Done / Rejected |
 | 📜 **审计日志** | 所有工具调用 / 人审 / 数据变更留痕，Admin 可查 |
 | 📚 **RAG 知识库** | 文档上传 → 解析分片 → 向量嵌入 → 混合检索（向量 + 关键词 + RRF 融合 + 可选重排）→ 评测 |
+| 📊 **评测体系** | 6 维度 LLM-as-Judge 评分（准确/完整/相关/低幻觉/工具/效率）+ 7 模式 A/B 对比 + RAG 开关对比 + 历史趋势 + 报告导出 |
 | 🧠 **长期记忆** | MemoryStore 维护对话历史 + 用户画像，跨会话召回 |
 | 🔌 **适配器模式** | `IExternalSystemAdapter` + `CrmAdapter`，预留 ERP / OA 扩展 |
 | 📡 **SSE 流式** | 模式切换 / Agent 步骤 / 工具调用 / 人审请求 等事件实时推送 |
@@ -39,7 +40,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                      前端 (React + Vite 5173)               │
 │  Login / Chat / Knowledge / RetrievalTest / RagEval         │
-│  Customers / Tickets / Approvals / Dashboard               │
+│  Customers / Tickets / Approvals / Dashboard / EvalDashboard│
 │                     (暗黑主题 + AntD 5)                      │
 └──────────────────────────┬──────────────────────────────────┘
                            │ /api/* (Vite proxy → 5000)
@@ -48,7 +49,8 @@
 │                                                             │
 │  ┌─────────────┐   ┌──────────────┐   ┌─────────────────┐   │
 │  │  JWT 鉴权   │   │  REST API    │   │  SSE 流式聊天   │   │
-│  │ User/Admin  │   │  CRM/工单/审计│   │  7 模式可切换   │   │
+│  │ User/Admin  │   │ CRM/工单/审计│   │  7 模式可切换   │   │
+│  │             │   │   /评测      │   │                 │   │
 │  └─────────────┘   └──────────────┘   └────────┬────────┘   │
 │                                                │            │
 │         ┌──────────────────────────────────────┘            │
@@ -181,7 +183,12 @@ MultiAgentSystem/
 │       │   ├── KnowledgeStore.cs          # RAG 知识库持久化
 │       │   ├── HybridRetriever.cs         # 混合检索（向量+关键词+RRF+重排）
 │       │   ├── DocumentParser.cs          # 文档解析分片
-│       │   └── MemoryStore.cs             # 长期记忆 + 用户画像
+│       │   ├── MemoryStore.cs             # 长期记忆 + 用户画像
+│       │   ├── EvalService.cs             # 评测引擎（7模式执行+并发+取消）
+│       │   ├── JudgeService.cs            # LLM-as-Judge 6维度评分
+│       │   ├── MetricCalculator.cs        # 工具准确率/效率自动指标
+│       │   ├── TestCaseStore.cs           # 评测用例仓储（预置+自定义）
+│       │   └── EvalReportStore.cs         # 评测报告仓储
 │       ├── Tools/                         # Agent 工具
 │       │   ├── TavilySearchTool.cs        # Tavily 搜索
 │       │   ├── CrmTools.cs                # CRM 操作工具集
@@ -189,14 +196,15 @@ MultiAgentSystem/
 │       ├── Models/                        # 数据模型
 │       │   ├── ChatModels.cs              # 聊天请求/消息模型
 │       │   ├── CrmModels.cs               # CRM 实体模型
-│       │   └── RagModels.cs               # RAG 实体模型
+│       │   ├── RagModels.cs               # RAG 实体模型
+│       │   └── EvalModels.cs              # 评测实体模型（用例/报告/维度）
 │       ├── Program.cs                     # 启动入口（DI + 端点）
 │       ├── appsettings.json               # 配置（含密钥，已 gitignore）
 │       ├── appsettings.example.json       # 配置模板（脱敏，可入库）
 │       └── MultiAgentSystem.Api.csproj
 ├── frontend/                              # 前端（React 18 + Vite 6）
 │   ├── src/
-│   │   ├── pages/                         # 9 个页面
+│   │   ├── pages/                         # 10 个页面
 │   │   │   ├── LoginPage.tsx              # 登录
 │   │   │   ├── ChatPage.tsx               # 多 Agent 聊天
 │   │   │   ├── KnowledgePage.tsx          # 知识库管理
@@ -205,12 +213,14 @@ MultiAgentSystem/
 │   │   │   ├── CustomersPage.tsx          # 客户管理
 │   │   │   ├── TicketsPage.tsx            # 工单管理
 │   │   │   ├── ApprovalsPage.tsx          # 人审待办
-│   │   │   └── DashboardPage.tsx          # 仪表盘
+│   │   │   ├── DashboardPage.tsx          # 仪表盘
+│   │   │   └── EvalDashboard.tsx          # 评测仪表盘（MVP-5）
 │   │   ├── components/
 │   │   │   ├── Layout.tsx                 # 主布局 + 侧边栏
 │   │   │   ├── Panels.tsx                 # Agent 流水线可视化
 │   │   │   ├── CrmPanel.tsx               # CRM 面板
-│   │   │   └── ApprovalModal.tsx          # 人审决策弹窗
+│   │   │   ├── ApprovalModal.tsx          # 人审决策弹窗
+│   │   │   └── MarkdownContent.tsx        # 共享 Markdown 渲染组件
 │   │   ├── api.ts                         # Axios 封装
 │   │   ├── auth.ts                        # 登录态 + JWT 管理
 │   │   ├── types.ts                       # 类型定义
@@ -268,6 +278,13 @@ MultiAgentSystem/
 | RAG评测 | POST | `/api/kb/eval` | 召回率/准确率评测 |
 | RAG统计 | GET | `/api/kb/stats` | 知识库与向量统计 |
 | 记忆 | GET | `/api/kb/memory/{sessionId}` | 长期记忆查询 |
+| 评测 | POST | `/api/eval/run` | 启动评测（选用例集/模式/并发/重试） |
+| 评测 | GET | `/api/eval/progress/{taskId}` | SSE 实时进度 |
+| 评测 | POST | `/api/eval/cancel/{taskId}` | 取消运行中的评测 |
+| 评测 | GET | `/api/eval/reports[/{taskId}]` | 历史报告列表/详情 |
+| 评测 | DELETE | `/api/eval/reports/{taskId}` | 删除报告 |
+| 评测 | GET | `/api/eval/reports/{taskId}/export` | 导出 Markdown/JSON |
+| 评测 | GET/POST/DELETE | `/api/eval/testcases[/{id}]` | 用例管理（含分组 sets） |
 
 ### SSE 事件类型
 
@@ -302,6 +319,7 @@ MultiAgentSystem/
 - **Vite 6**
 - **react-router-dom 7**（路由 + 守卫）
 - **react-markdown 10** + **rehype-highlight** + **remark-gfm**（Markdown 渲染）
+- **ECharts 6**（echarts-for-react，评测雷达图 + 趋势折线图）
 - **axios 1.7**
 
 ### 外部服务
@@ -316,6 +334,8 @@ MultiAgentSystem/
 - `dotnet build` — 0 错误 0 警告
 - `tsc --noEmit` — 0 错误
 - 端到端：7 种编排模式均可切换；RAG 文档上传 → 检索 → 评测链路打通；CRM + 人审闭环验证
+- 评测体系：6 维度评分 + 7 模式 A/B 对比 + RAG 开关对比 + 历史趋势/报告对比 + Markdown/JSON 导出全链路打通
+- Docker：`docker compose up -d --build` 一键起 backend/frontend/qdrant，数据落命名卷持久化
 
 ---
 
@@ -328,7 +348,7 @@ MultiAgentSystem/
 | MVP-2 | 7 种编排模式 | ✅ 完成 |
 | MVP-3 | RAG 知识库 | ✅ 完成 |
 | MVP-4 | CRM 集成 + 人审 + JWT | ✅ 完成 |
-| MVP-5 | 评测体系完善 | 🔨 RAG 评测雏形已具备，待扩展多维度基准 |
+| MVP-5 | 评测体系（6维度评分 + A/B对比 + 历史趋势 + Docker持久化） | ✅ 完成 |
 | 打磨 | 注解 + 文档 + 部署 | 🔨 进行中 |
 
 ---
@@ -344,6 +364,34 @@ MultiAgentSystem/
 ---
 
 ## 📜 历史版本记录（CHANGELOG）
+
+### MVP-5 · 2026-07-21 · 评测体系
+**新增**
+- 评测引擎 `EvalService`：加载用例 → 按 7 种编排模式真实执行 → 收集结果 → 评分 → 汇总报告
+- 6 维度评分模型：准确性/完整性/相关性/低幻觉（LLM-as-Judge）+ 工具准确率/响应效率（自动计算），加权平均统一为 0-10 口径
+- LLM-as-Judge `JudgeService`：DeepSeek T=0.1 结构化打分，支持 1/3 次投票取中位数
+- A/B 对比：同一组用例多模式横向对比 + RAG 开关对比，LLM 自动生成最优模式分析与改进建议
+- 评测仪表盘 `EvalDashboard`：控制面板 + SSE 实时进度 + 6 维雷达图 + A/B 对比表 + RAG 效果对比 + 用例详情 Drawer（对话时间线/工具链/模式对比）
+- 历史趋势：综合分折线图 + 两份报告对比（维度增减/新增通过失败）+ 按时间/得分排序
+- 报告导出：Markdown（概览/维度表/对比/失败清单/改进建议）+ JSON 原始数据
+- 用例体系：29 个预置用例覆盖 6 大场景，用例集分组（全量/快速冒烟/RAG/工具/CRM 专项），支持自定义用例
+- 任务治理：启动清理僵尸 running 任务、真取消机制（CancellationToken）、报告删除、失败重试
+
+**基础设施**
+- EF Core 与 ConversationStore 统一读取 `DB_PATH` 写卷，修复 Docker 重建丢数据
+- 启动建表改为"缺哪张补哪张"，兼容旧版本不完整 schema（内存库生成缺失表 DDL）
+- `EvalReportStore`/`TestCaseStore` 改用 `IDbContextFactory`，修复手动 CreateScope 泄漏
+- `Parallel.ForEachAsync` 真并发执行（替代 SemaphoreSlim 串行）
+
+**编排面板增强**
+- 抽取共享 `MarkdownContent` 组件，Agent 输出浮层由纯文本 Tooltip 升级为 Markdown Popover（限宽限高可滚动）
+
+**关键 bug 修复**
+- 分数口径不一致（WeightedTotal 0-77 vs 简单平均 0-10）→ 统一为 WeightedAverage 加权平均
+- 工具列 NaN%（前端 `toolAccuracy` vs 后端 `toolCallAccuracy` 字段名错位）
+- 成功数显示 `4/0`（`FinalizeTaskAsync` 漏写 TotalCases）
+- `EvalDimension` 枚举序列化为整数 → 加 `JsonStringEnumConverter`
+- RagEvalPage 字段错位（`expectedAnswer` vs `ExpectedKeyPoints`）→ 专用 `RagEvalCase` + 要点模糊匹配
 
 ### MVP-4 · 2026-07-16 · CRM 集成 + 人审 + JWT 鉴权
 **新增**
